@@ -1,0 +1,83 @@
+/* Global base: theme palette, reset, and element defaults. Everything component-specific
+   lives in a .scss file next to its component. */
+
+:root {
+  --header-height: 44px;
+  --glass-bg: color-mix(in srgb, var(--bg) 70%, transparent);
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --muted: #8b949e;
+  --accent: #2563eb;
+  --accent-hover: #3b82f6;
+  --error: #f85149;
+  --error-hover: #ff6a5f;
+  --success: #3fb950;
+  --btn-bg: #21262d;
+  --btn-hover: #30363d;
+  --log-string: #56d4dd;
+  --log-num: #e3b341;
+  --code-keyword: #ff7b72;
+  --code-param: #79c0ff;
+  --log-string-on-error: #7ee8ef;
+  --log-num-on-error: #f0c674;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --panel: #f6f8fa;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --muted: #59636e;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --error: #cf222e;
+    --error-hover: #a40e26;
+    --success: #1a7f37;
+    --btn-bg: #eff2f5;
+    --btn-hover: #e2e7ec;
+    --log-string: #0e7490;
+    --log-num: #b45309;
+    --code-keyword: #cf222e;
+    --code-param: #0550ae;
+    --log-string-on-error: #155e75;
+    --log-num-on-error: #92400e;
+  }
+}
+:root[data-theme="sand"] {
+  --bg: #fefefe;
+  --panel: #f4f2ee;
+  --border: #dcd6ca;
+  --text: #26231c;
+  --muted: #6b6456;
+  --btn-bg: #e9e5da;
+  --btn-hover: #ded8c9;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+#root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--btn-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+
+  &:hover { background: var(--btn-hover); }
+  &:disabled { opacity: 0.55; cursor: default; }
+}

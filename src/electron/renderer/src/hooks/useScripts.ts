@@ -1,0 +1,101 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { errorText } from "../../../../domain/errors";
+import { api } from "../stores/api";
+import type { JsScript, SchedulerSnapshot } from "../types";
+
+const AUTOSAVE_DEBOUNCE_MS = 400;
+
+const EMPTY_SNAPSHOT: SchedulerSnapshot = { runs: [], running: [], nextRunAt: {} };
+
+// The Scripts tab's state: the script list as a local draft (autosaved, like Commands — there is
+// no Save button) plus the live scheduler snapshot pushed from the main process.
+export function useScripts() {
+  const [scripts, setScripts] = useState<JsScript[]>([]);
+  const [snapshot, setSnapshot] = useState<SchedulerSnapshot>(EMPTY_SNAPSHOT);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const readOnly = useRef(false);
+
+  useEffect(() => {
+    let alive = true;
+    const unsubscribe = api.onSchedulerUpdate((next) => {
+      if (alive) setSnapshot(next);
+    });
+    api.getJsScripts().then(
+      (result) => {
+        if (!alive) return;
+        readOnly.current = !result.ok;
+        setScripts(result.scripts);
+        setSnapshot(result.snapshot);
+        setError(result.error);
+        setLoading(false);
+      },
+      (err: unknown) => {
+        if (!alive) return;
+        readOnly.current = true;
+        setError(errorText(err));
+        setLoading(false);
+      },
+    );
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const pending = useRef<(() => Promise<void>) | null>(null);
+  const skipInitial = useRef(true);
+
+  useEffect(() => {
+    if (loading || skipInitial.current) {
+      if (!loading) skipInitial.current = false;
+      return;
+    }
+    if (readOnly.current) return;
+    const save = async (): Promise<void> => {
+      pending.current = null;
+      try {
+        const result = await api.saveJsScripts(scripts);
+        setError(result.ok ? "" : result.error);
+      } catch (err) {
+        setError(errorText(err));
+      }
+    };
+    pending.current = save;
+    const timer = setTimeout(() => void save(), AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [scripts, loading]);
+
+  const flush = useCallback((): Promise<void> => pending.current?.() ?? Promise.resolve(), []);
+  useEffect(() => () => void flush(), []);
+
+  const update = useCallback((id: string, patch: Partial<JsScript>) => {
+    setScripts((list) => list.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  }, []);
+
+  const add = useCallback((script: JsScript) => {
+    setScripts((list) => [...list, script]);
+  }, []);
+
+  const remove = useCallback((id: string) => {
+    setScripts((list) => list.filter((s) => s.id !== id));
+  }, []);
+
+  const append = useCallback((imported: JsScript[]) => {
+    setScripts((list) => [...list, ...imported]);
+  }, []);
+
+  return {
+    scripts,
+    snapshot,
+    error,
+    loading,
+    readOnly: readOnly.current,
+    add,
+    remove,
+    update,
+    append,
+    flush,
+    setError,
+  };
+}

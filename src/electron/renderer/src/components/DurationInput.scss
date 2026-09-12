@@ -1,0 +1,19 @@
+/* Stopwatch-style duration field. Narrow (it holds "1:02:03" at most) and tabular so the digits
+   don't shift as they're typed. Inherits the text-input look from `.field input` in Field.scss —
+   only the size and figures are special here.
+
+   The selector has to out-specify that `.field input { width: 100% }`, hence `input.duration-input`
+   rather than the bare class: at equal weight the stretch would win and shove whatever sits beside
+   the field (the Unlimited checkbox) off the panel. */
+input.duration-input {
+  width: 9ch;
+  min-width: 9ch;
+  flex: none;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+}

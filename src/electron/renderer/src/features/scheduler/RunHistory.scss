@@ -1,0 +1,173 @@
+/* One command's run log, filling the height of the logs column: the runs as one horizontal strip
+   of colored chips, a line of detail for the selected one, then its output taking the rest. */
+.run-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* The parent (.column-body-plain) hands over the pane's height; min-height: 0 lets the output
+     box shrink and scroll rather than overflowing the pane. */
+  flex: 1;
+  min-height: 0;
+}
+
+/* The strip is one non-wrapping row, so its height is fixed no matter how many runs are retained.
+   The bottom padding leaves the overlay scrollbar somewhere to sit that isn't over the chips. */
+.run-strip {
+  flex: none;
+  padding-bottom: 8px;
+
+  .run-strip-row {
+    display: flex;
+    gap: 4px;
+    /* Don't let the flex row shrink its chips to fit — that's what the sideways scroll is for. */
+    width: max-content;
+  }
+}
+
+/* One run. The status is the chip's color, which is the whole reason this fits in a strip: green
+   scanned at a glance says as much as the word "Success" spelled out on its own row. */
+.run-chip {
+  /* Per-status hue, consumed by the border/background mixes below. */
+  --chip: var(--muted);
+  flex: none;
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--chip) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chip) 45%, transparent);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+
+  &.success {
+    --chip: var(--success);
+  }
+  &.failed {
+    --chip: var(--error);
+  }
+  &.cancelled {
+    --chip: var(--muted);
+  }
+  &.running {
+    --chip: var(--accent);
+  }
+  /* Timed out sits between failed and stopped — the app ended it, but not because the user asked.
+     Amber, reusing the log palette's number color so both themes are already covered. */
+  &.timeout {
+    --chip: var(--log-num);
+  }
+
+  &:hover {
+    background: color-mix(in srgb, var(--chip) 32%, transparent);
+  }
+
+  /* The run being shown below. An inset ring rather than a thicker border, so the chip can't
+     change size and shuffle the strip as the selection moves. */
+  &.active {
+    border-color: var(--chip);
+    box-shadow: inset 0 0 0 1px var(--chip);
+  }
+}
+
+/* The selected run's outcome in words, under the strip. */
+.run-detail {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+
+  .run-detail-meta {
+    min-width: 0;
+    color: var(--muted);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* Outcome pill. Colors match the app's semantic variables so both themes track automatically. */
+.run-status {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+
+  &.success {
+    color: var(--success);
+  }
+  &.failed {
+    color: var(--error);
+  }
+  &.cancelled {
+    color: var(--muted);
+  }
+  &.running {
+    color: var(--accent);
+  }
+  &.timeout {
+    color: var(--log-num);
+  }
+}
+
+/* The captured output — a terminal-ish block taking whatever height the strip and detail line
+   leave, scrolled on both axes so a long line never widens the column. */
+.run-output {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+
+  .run-line {
+    display: flex;
+    gap: 10px;
+    /* Wrap rather than clip, but keep the timestamp column aligned. */
+    white-space: pre-wrap;
+    word-break: break-word;
+
+    &.stderr .run-line-text {
+      color: var(--error);
+    }
+
+    /* The scheduler's own notes (the command line, the exit summary) — dimmed so real output
+       stands out. */
+    &.system .run-line-text {
+      color: var(--muted);
+    }
+  }
+
+  .run-line-time {
+    flex: none;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+  }
+
+  .run-line-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .run-output-note,
+  .run-output-empty {
+    color: var(--muted);
+  }
+
+  .run-output-note {
+    margin-bottom: 4px;
+    font-style: italic;
+  }
+}

@@ -1,0 +1,13 @@
+/* One line, cut off with an ellipsis (see Truncate.tsx). */
+.truncate {
+  /* Not inline: overflow has no effect on an inline box, so the text would spill instead of being
+     cut. Blockified anyway wherever this is a flex item — the declaration is for the rest. */
+  display: block;
+  /* And as a flex item, this is what lets it shrink under the width of its own text — without it a
+     nowrap line sets an unshrinkable minimum and pushes the row wider instead of truncating. */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

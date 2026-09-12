@@ -1,0 +1,70 @@
+{
+  "name": "command-scheduler",
+  "version": "0.1.0",
+  "description": "Electron tray app that runs shell commands on a cron schedule.",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.renderer.json && tsc -p tsconfig.tests.json",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "electron:build": "node scripts/build-electron.mjs",
+    "electron:dev": "node scripts/electron-dev.mjs",
+    "dist": "npm run electron:build && electron-builder",
+    "dist:dir": "npm run electron:build && electron-builder --dir"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.4",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^42.5.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1",
+    "overlayscrollbars": "^2.16.0",
+    "overlayscrollbars-react": "^0.5.6",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "sass-embedded": "^1.100.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.7.0",
+    "vite": "^8.1.3",
+    "vitest": "^4.1.9"
+  },
+  "build": {
+    "appId": "com.timdevlet.command-scheduler",
+    "productName": "Command Scheduler",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "build/icon.png"
+    }
+  }
+}

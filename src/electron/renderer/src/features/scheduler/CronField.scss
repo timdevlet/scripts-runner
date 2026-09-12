@@ -1,0 +1,25 @@
+/* The schedule editor: preset dropdown, optional raw cron expression, and the live preview line. */
+.cron-field {
+  /* The preset row is a .field.inline, whose default margin would double up with the fields
+     around it. */
+  > .field.inline {
+    margin-top: 0;
+  }
+
+  .cron-expr {
+    font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+    font-size: 12px;
+  }
+
+  /* Always rendered (even when empty) so resolving the preview doesn't shift the panel. */
+  .cron-preview {
+    min-height: 18px;
+    margin: -4px 0 12px;
+    color: var(--muted);
+    font-size: 12px;
+
+    &.invalid {
+      color: var(--error);
+    }
+  }
+}

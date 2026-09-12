@@ -1,0 +1,28 @@
+/* ▶ / spinner button (RunButton.tsx). */
+.run-button {
+  flex: none;
+
+  /* Disabled while running, but it's showing live state rather than being unavailable — so keep it
+     legible instead of the usual dimmed-out treatment. */
+  &.running:disabled {
+    opacity: 1;
+    color: var(--accent);
+  }
+
+  &.running svg {
+    animation: run-button-spin 0.9s linear infinite;
+  }
+}
+
+@keyframes run-button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Respect the OS "reduce motion" setting — the ring still reads as a distinct state without it. */
+@media (prefers-reduced-motion: reduce) {
+  .run-button.running svg {
+    animation: none;
+  }
+}

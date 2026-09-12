@@ -1,0 +1,118 @@
+/* Full-height panes in a row, each with its own scroller, with a draggable divider in the gaps
+   between them (see Columns.tsx). Widths come from the caller's class; everything here is about
+   filling the height and keeping a pane's scrolling to itself. */
+.columns {
+  /* The dividers are absolutely positioned into their grid column, which needs this element to be
+     their containing block. */
+  position: relative;
+  display: grid;
+  /* Fill the flex parent, and let the panes' inner scrollers absorb the overflow instead of the
+     grid growing past the window (min-height: 0 is what allows that). */
+  flex: 1;
+  min-height: 0;
+  /* Named so the dividers can size their grab area to whatever the gap is. */
+  --columns-gap: 10px;
+  gap: var(--columns-gap);
+  /* Rows share the height evenly and may shrink below their content — the panes scroll instead. */
+  grid-auto-rows: minmax(0, 1fr);
+}
+
+/* A pane. Bordered card on the panel surface, like SettingsGroup, but sized by the grid rather
+   than by its content. */
+.column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  /* Keeps scrolled content inside the rounded corners. */
+  overflow: hidden;
+}
+
+.column-title {
+  flex: none;
+  margin: 0;
+  padding: 7px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  /* A long title (a command's name) shortens rather than wrapping the bar to two lines. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+}
+
+/* The children scroll themselves here, so this must not — and it lays them out down the pane. */
+.column-body-plain {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ScrollArea.scss drops vertical bars below the glass header, which is right for the page-level
+   panes that scroll under it. A pane inside a column starts at its own top edge instead. Written
+   with the theme class so it wins regardless of stylesheet order. */
+.column .os-theme-app.os-scrollbar-vertical {
+  top: 0;
+}
+
+.column-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* The drag handle between two panes. Positioned into the grid column of the pane it precedes and
+   pulled back across the gap, so the grab area covers the whole gap plus the border on either side
+   of it — aim at the seam and it's live. Out of flow, so it takes no track of its own. */
+.column-resizer {
+  position: absolute;
+  grid-row: 1 / -1;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * (var(--columns-gap) + 1px));
+  width: calc(var(--columns-gap) + 2px);
+  z-index: 1;
+  cursor: col-resize;
+  /* Pointer events only — no scroll gesture stealing the drag halfway through. */
+  touch-action: none;
+  user-select: none;
+
+  &:focus-visible {
+    outline: none;
+  }
+
+  /* Nothing is drawn in the gap until you're on it: the panes' own borders already draw the seam,
+     and this lights it up. */
+  &::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    transform: translateX(-50%);
+    border-radius: 1px;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  &:hover::after,
+  &:focus-visible::after,
+  &.dragging::after {
+    opacity: 1;
+  }
+}

@@ -1,0 +1,42 @@
+/* Confirmation asked in place, anchored to the button that asked it (ConfirmPopover.tsx). */
+/* Wraps the trigger tightly — its box is what the panel is measured against, so it must be the
+   button's box and not a full-width line. No positioning context needed: the panel isn't inside. */
+.confirm-popover {
+  display: inline-flex;
+}
+
+.confirm-panel {
+  /* Fixed, not absolute, and portalled to <body>: the trigger's pane clips its overflow, so a panel
+     positioned inside it is cut off. Its top/left come from the component, which measures the
+     trigger and the window and picks a spot that fits (ConfirmPopover.tsx, lib/popoverPosition.ts);
+     `placement-top` / `placement-bottom` say which side of the trigger it landed on. */
+  position: fixed;
+  z-index: 20;
+  width: max-content;
+  max-width: 260px;
+  padding: 12px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  /* Lifted off the card behind it — the panel and the group share a background color. */
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+
+  .confirm-title {
+    margin: 0;
+    font-weight: 500;
+  }
+
+  .confirm-description {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+}

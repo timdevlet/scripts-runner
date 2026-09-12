@@ -1,0 +1,293 @@
+/* JS source editor: line-number gutter on the left, highlighted overlay behind a transparent
+   textarea, and a maximize state that fills the app window (see CodeEditor.tsx). */
+
+.code-editor-wrap {
+  margin-bottom: 12px;
+}
+
+.code-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  min-height: 30px;
+
+  label {
+    flex: 1;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .icon-button {
+    width: 26px;
+    height: 26px;
+    border: none;
+    background: transparent;
+
+    &:hover { background: var(--btn-hover); }
+  }
+}
+
+.code-editor {
+  display: flex;
+  flex-direction: column;
+  height: 220px;
+  min-height: 160px;
+  overflow: hidden;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+
+  &:focus-within {
+    border-color: var(--accent);
+  }
+}
+
+.code-editor-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Line numbers: a left panel of their own, not part of the scrolling source. Vertical position
+   is copied from the textarea on scroll (CodeEditor.tsx). */
+.code-editor-gutter {
+  flex: none;
+  overflow: hidden;
+  width: calc(var(--gutter-ch, 2ch) + 20px);
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: right;
+  user-select: none;
+
+  pre {
+    margin: 0;
+    padding: 8px 8px 8px 10px;
+    font: inherit;
+    line-height: 18px;
+  }
+}
+
+.code-editor-pane {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.code-editor-highlight,
+.code-editor-matches,
+.code-editor-input {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 8px 12px;
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.code-editor-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  min-width: 100%;
+  width: max-content;
+  pointer-events: none;
+  color: var(--text);
+}
+
+.js-keyword { color: var(--code-keyword); }
+.js-string { color: var(--log-string); }
+.js-comment { color: var(--muted); }
+.js-number { color: var(--log-num); }
+.js-param { color: var(--code-param); }
+
+.code-editor-input {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  resize: none;
+  color: transparent;
+  caret-color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 55%, transparent) transparent;
+
+  &:focus { outline: none; }
+
+  &::placeholder { color: var(--muted); }
+
+  &::selection {
+    color: transparent;
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+
+  &:disabled { opacity: 1; cursor: default; }
+}
+
+.code-editor-matches {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  min-width: 100%;
+  width: max-content;
+  pointer-events: none;
+  color: transparent;
+}
+
+.js-match {
+  color: transparent;
+  background: color-mix(in srgb, var(--log-num) 38%, transparent);
+  border-radius: 2px;
+}
+
+.js-match.current {
+  background: color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.code-editor-find {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.code-editor > .code-editor-find {
+  flex: none;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.code-editor-head .code-editor-find {
+  flex: 1;
+}
+
+.code-editor-find-field {
+  position: relative;
+  flex: 1;
+  min-width: 80px;
+}
+
+.code-editor-find-icon {
+  position: absolute;
+  top: 50%;
+  left: 7px;
+  display: flex;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.code-editor-find-input {
+  width: 100%;
+  height: 28px;
+  padding: 4px 8px 4px 28px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+}
+
+.code-editor-find-count {
+  flex: none;
+  min-width: 4.5em;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.code-editor-find .icon-button {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+
+  &:hover { background: var(--btn-hover); }
+}
+
+.code-editor-chevron-up {
+  transform: rotate(180deg);
+}
+
+/* Placeholder left in the form while the editor is portalled over the window, so the column
+   doesn't collapse under the overlay. */
+.code-editor-slot {
+  height: 254px;
+  margin-bottom: 12px;
+}
+
+/* Fills the app window — above the glass header (z-index 1) and toasts (2). */
+.code-editor-wrap.maximized {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  background: var(--bg);
+
+  .code-editor-head {
+    flex: none;
+    height: var(--header-height);
+    margin: 0;
+    padding: 0 14px;
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(20px) saturate(1.8);
+    backdrop-filter: blur(20px) saturate(1.8);
+    border-bottom: 1px solid var(--border);
+
+    label {
+      flex: 0 1 auto;
+      max-width: 22%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+  }
+
+  .code-editor {
+    flex: 1;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    resize: none;
+    border: none;
+    border-radius: 0;
+  }
+}
+
+body.is-mac .code-editor-wrap.maximized .code-editor-head {
+  padding-left: 84px;
+  -webkit-app-region: drag;
+
+  button,
+  input {
+    -webkit-app-region: no-drag;
+  }
+}

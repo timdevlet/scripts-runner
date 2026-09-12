@@ -1,0 +1,19 @@
+/* Icon-only button: base <button> look from global.scss, squared up and centered around
+   an SVG. Icons render muted and brighten on hover. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  color: var(--muted);
+
+  &:hover { color: var(--text); }
+
+  /* Toggled state (e.g. the header's Logs button while the log view is showing). */
+  &[aria-pressed="true"] {
+    color: var(--accent);
+    background: var(--btn-hover);
+  }
+}

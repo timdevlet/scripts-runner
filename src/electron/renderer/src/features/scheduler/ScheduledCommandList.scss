@@ -1,0 +1,114 @@
+/* The single-select command list — the left column of the Commands tab. Deliberately the same
+   shape as the TV control list (TvControlList.scss): a vertical stack of rows, title + muted
+   subtitle, accent outline on the selected one, and a dashed "add" row at the end. */
+.sched-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  /* A row holds two controls — the selectable area and the ▶ — so it's a plain flex wrapper that
+     merely *looks* like the button it used to be. The row's own chrome lives here; the inner
+     button is stripped bare. */
+  .sched-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    margin: 0;
+    padding: 6px 8px 6px 12px;
+    text-align: left;
+    background: var(--panel, var(--bg));
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: inherit;
+
+    &:hover {
+      background: var(--btn-hover);
+    }
+
+    &.active {
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+  }
+
+  /* The selectable part fills the row so clicking anywhere but the ▶ selects the command. */
+  .sched-row-select {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    margin: 0;
+    padding: 4px 0;
+    text-align: left;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+
+    &:hover {
+      background: none;
+    }
+  }
+
+  /* Sits flush in the row rather than reading as a separate control until hovered. */
+  .run-button {
+    background: none;
+    border-color: transparent;
+
+    &:hover:not(:disabled) {
+      background: var(--btn-bg);
+      border-color: var(--border);
+    }
+  }
+
+  .sched-row-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .sched-row-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+    /* A long command name shortens rather than wrapping the row to three lines — that's the label
+       text's own box (components/Truncate), since ellipsizing can't be done by a flex box like this
+       one. This still clips, as a backstop for children that aren't truncating themselves. */
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+
+    svg {
+      flex: none;
+      color: var(--muted);
+    }
+  }
+
+  .sched-row-subtitle {
+    display: block;
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The "+ Add command" row reads as an action, not a command — muted until hovered/active. It's
+     still a real button, so it keeps the padding the command rows give their inner button. */
+  .sched-row-add {
+    justify-content: flex-start;
+    padding: 10px 12px;
+    color: var(--muted);
+    border-style: dashed;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--text);
+    }
+  }
+}

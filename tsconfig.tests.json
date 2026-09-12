@@ -1,0 +1,17 @@
+{
+  // Typechecks tests/ (main tsconfig covers only src/). Bundler resolution because the tests
+  // import both node-side modules (".js" specifiers) and renderer modules (extensionless, Vite
+  // style) — vitest transforms both the same way.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    // The renderer modules some tests pull in (stores, lib helpers) need the DOM types and JSX.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
+  },
+  // appapi.d.ts is the ambient window.appAPI declaration the renderer modules rely on — ambient
+  // files must be listed explicitly since only tests/ is globbed.
+  "include": ["tests/**/*.ts", "src/electron/renderer/src/appapi.d.ts"],
+  "exclude": []
+}

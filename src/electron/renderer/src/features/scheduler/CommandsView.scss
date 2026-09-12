@@ -1,0 +1,144 @@
+/* The Commands tab: three full-height panes — the command list, the selected command's
+   configuration, and (behind the Logs toggle) its run log. The panes and their scrolling come from
+   components/Columns; what's here is how wide they are, and the bits inside them.
+
+   The tab keeps the Settings body's `.modal` class for its typography only (p.hint, inline <code>,
+   .error). Its own layout is the opposite: nothing scrolls at this level, so the panes can take the
+   window's full height. */
+/* Doubled class deliberately: this has to out-specify `.modal`'s own padding and `.modal .error`,
+   and which of the two stylesheets loads first isn't ours to decide. */
+.modal.commands-view {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Tighter than the settings body, and this padding is all that separates the panes from the
+     window edge — every pixel of it is height the run log doesn't get. The top clears the fixed
+     glass header, which nothing scrolls under here. */
+  padding: calc(var(--header-height) + 10px) 14px 12px;
+
+  /* Store-level failure line under the panes (see CommandsView.tsx) — .modal .error puts its
+     margin below, where it would push the panes up instead. */
+  > .error {
+    margin: 10px 0 0;
+  }
+}
+
+/* The side panes take their width from --col-list / --col-runs so dragging their seams can override
+   it (Columns writes the property onto this element); the values here are the defaults a
+   double-click returns to. The middle pane takes the slack, with minmax(0, …) so its inputs shrink
+   instead of forcing the grid wider than the window. */
+.sched-columns {
+  grid-template-columns: var(--col-list, 230px) minmax(0, 1fr);
+
+  /* With the logs pane open: commands | command | runs. The side panes are sized to fit three
+     across the app's default 860px window — that's the layout this toggle exists to produce, so it
+     has to work without resizing anything first. */
+  &.with-logs {
+    grid-template-columns: var(--col-list, 195px) minmax(0, 1fr) var(--col-runs, 285px);
+  }
+
+  /* Near the window's 700px minimum there isn't room for three side by side — the configuration
+     fields would be the ones crushed. The run log takes a full-width row underneath instead: still
+     its own scroller, just wider than tall. Rows, not stacking, because nothing scrolls at the tab
+     level; the two rows split the height between them. */
+  @media (max-width: 800px) {
+    &.with-logs {
+      grid-template-columns: var(--col-list, 195px) minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1.35fr) minmax(0, 1fr);
+
+      .sched-logs {
+        grid-column: 1 / -1;
+      }
+
+      /* Down here the run log is a row of its own, with no vertical seam to drag. */
+      [data-divider="3"] {
+        display: none;
+      }
+    }
+  }
+}
+
+/* The list pane: rows carry their own borders, so the pane's padding is all it needs. */
+.sched-list-column .column-body {
+  padding: 8px;
+}
+
+/* Export / Import, side by side in the list pane's footer. Buttons carry an icon + label, so line
+   them up. */
+.sched-transfer {
+  display: flex;
+  gap: 8px;
+
+  button {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+}
+
+/* Full width on its own row: three buttons across a 210px pane would clip their labels. */
+.sched-logs-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+
+  /* Pressed reads as "this pane is open", so it matches the accent used for selection. */
+  &[aria-pressed="true"] {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+}
+
+.sched-panel {
+  /* The pane's own padding is enough under the last paragraph. Not a `>` selector: the body is a
+     ScrollArea, and OverlayScrollbars moves the content into a viewport element of its own. */
+  p.hint:last-child {
+    margin-bottom: 0;
+  }
+
+  /* The command line itself is code — monospace makes a stray space or quote visible. */
+  .sched-command {
+    font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+    font-size: 12px;
+  }
+}
+
+/* Run / Stop on the left, Delete pushed to the right — a destructive action shouldn't sit under
+   the cursor that just pressed Run. */
+.sched-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .sched-delete {
+    margin-left: auto;
+  }
+}
+
+/* The run-log pane. RunHistory divides the height itself, so the pane only trims its padding. */
+.sched-logs .column-body {
+  padding: 10px;
+
+  > p.hint {
+    margin-bottom: 0;
+  }
+}
+
+/* Inline code in the tab's hint paragraphs (file names, example commands). */
+.modal p.hint code {
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--btn-bg);
+}

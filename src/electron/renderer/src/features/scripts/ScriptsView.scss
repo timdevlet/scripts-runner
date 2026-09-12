@@ -1,0 +1,7 @@
+/* Scripts tab extras on top of the shared Commands pane layout (CommandsView.scss). */
+
+.script-params {
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+}

@@ -1,0 +1,18 @@
+/* Settings group — a raised card collecting related settings under an optional title. */
+.settings-group {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 12px;
+
+  > h3 {
+    margin: 0 0 12px;
+    font-size: 13px;
+  }
+
+  /* Field margins are for spacing between rows — at the group's edges they would
+     stack with the 20px padding, so collapse them. */
+  > .field:first-child { margin-top: 0; }
+  > .field:last-child { margin-bottom: 0; }
+}
