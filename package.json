@@ -15,7 +15,9 @@
     "electron:build": "node scripts/build-electron.mjs",
     "electron:dev": "node scripts/electron-dev.mjs",
     "dist": "npm run electron:build && electron-builder",
-    "dist:dir": "npm run electron:build && electron-builder --dir"
+    "dist:dir": "npm run electron:build && electron-builder --dir",
+    "dist:portable:win": "npm run electron:build && electron-builder --win portable --x64",
+    "dist:portable:mac": "npm run electron:build && electron-builder --mac zip --arm64 --x64"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
@@ -49,7 +51,8 @@
     ],
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "icon": "build/icon.png"
     },

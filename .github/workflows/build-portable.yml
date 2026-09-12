@@ -1,0 +1,62 @@
+name: Build portable
+
+on:
+  push:
+    paths-ignore:
+      - "**/*.md"
+      - LICENSE
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-portable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-portable
+            os: windows-latest
+            # Single self-contained .exe — no installer, no admin rights.
+            builder_args: --win portable --x64
+          - name: macos-portable
+            os: macos-latest
+            # macOS has no "portable" target; a zipped .app is the equivalent
+            # (unzip and run). Built for both Apple Silicon and Intel.
+            builder_args: --mac zip --arm64 --x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Bundle main, preload and renderer
+        run: npm run electron:build
+
+      - name: Package portable build
+        run: npx electron-builder ${{ matrix.builder_args }} --publish never
+        env:
+          # No signing certificates in CI: keep electron-builder from looking for
+          # a keychain identity and failing the macOS build.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            release/*.exe
+            release/*.zip
+          if-no-files-found: error
+          retention-days: 30
