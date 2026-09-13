@@ -265,6 +265,11 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
     try {
       handle = run(job, (stream, text) => {
         append(record, stream, text);
+        // Mirror the run's own output into the app log as well as its run record. Without this
+        // a script's console.log only ever lands in the per-run output column, so the Logs tab
+        // (and the terminal, in dev) shows a run starting and finishing with nothing in between.
+        if (stream === "stderr") writeError(text);
+        else write(text);
         emit();
       });
     } catch (err) {

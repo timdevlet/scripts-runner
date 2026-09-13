@@ -343,6 +343,29 @@ describe("captured output", () => {
     ]);
   });
 
+  it("mirrors a run's output into the app log, so it isn't only in the run record", async () => {
+    // Without this the Logs tab (and the dev terminal) shows a run starting and finishing with
+    // nothing in between — a script's own console output never reached the log stream.
+    const logged: string[] = [];
+    const errored: string[] = [];
+    scheduler = createScheduler({
+      run: runner.run,
+      now: () => clock,
+      log: (m) => logged.push(m),
+      logError: (m) => errored.push(m),
+      newId: () => `run-${++ids}`,
+    });
+    scheduler.setCommands([command({ command: "echo hi" })]);
+    scheduler.runNow("a");
+    runner.last().emit("stdout", "hi");
+    runner.last().emit("stderr", "a warning");
+    runner.last().finish({ code: 0, signal: null });
+    await settled();
+
+    expect(logged).toContain("hi");
+    expect(errored).toContain("a warning");
+  });
+
   it("caps a chatty run and flags it truncated", () => {
     const capped = createScheduler({
       run: runner.run,
