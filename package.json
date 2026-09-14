@@ -27,6 +27,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "electron": "^42.5.0",
     "electron-builder": "^26.15.3",
+    "electron-updater": "^6.8.9",
     "esbuild": "^0.28.1",
     "overlayscrollbars": "^2.16.0",
     "overlayscrollbars-react": "^0.5.6",
@@ -51,7 +52,6 @@
     ],
     "mac": {
       "target": [
-        "dmg",
         "zip"
       ],
       "icon": "build/icon.png"
@@ -68,6 +68,13 @@
         "AppImage"
       ],
       "icon": "build/icon.png"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "timdevlet",
+        "repo": "scripts-runner"
+      }
+    ]
   }
 }

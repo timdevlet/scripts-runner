@@ -24,3 +24,22 @@
     max-width: 640px;
   }
 }
+
+/* Updates group: status text on the left, the one action button on the right. Wraps rather than
+   squeezing the button when the status line grows (a long "downloaded — restart" message). */
+.update-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  font-size: 13px;
+
+  button {
+    flex: none;
+  }
+}
+
+.settings-view .hint.update-note {
+  margin: 8px 0 0;
+}

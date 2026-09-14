@@ -4,8 +4,10 @@
 import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 import type { JsScript } from "../domain/js-script.js";
 import type { RunLine, ScheduledCommand, SchedulerSnapshot } from "../domain/scheduled.js";
+import type { UpdateState } from "../domain/update.js";
 import type { LogEntry } from "../log.js";
 import type { AppSettings } from "./settings.js";
+import type { UpdateActionResult, UpdateCheckResult } from "./update-check.js";
 
 export type ScheduledCommandsResult = {
   // false when the stored file couldn't be read; the tab then shows `error` and stays read-only
@@ -55,6 +57,19 @@ const appAPI = {
   getHistory: (): Promise<LogEntry[]> => ipcRenderer.invoke("log:history"),
   clearHistory: (): void => ipcRenderer.send("log:clear"),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke("app:version"),
+  // Auto-update against the GitHub releases (see src/electron/update-check.ts). The check
+  // returns the current update state (null while up to date).
+  checkForUpdate: (): Promise<UpdateCheckResult> => ipcRenderer.invoke("update:check"),
+  // Install mode: downloads the update, resolving when it lands (progress arrives via
+  // onUpdateState meanwhile). Browser mode: opens the download in the browser. What (and
+  // whether) to download is the main process's last check — deliberately not a renderer
+  // argument, so the renderer can't feed the updater (or openExternal) anything of its own.
+  downloadUpdate: (): Promise<UpdateActionResult> => ipcRenderer.invoke("update:download"),
+  // Quit and install a downloaded update (install mode only).
+  installUpdate: (): Promise<UpdateActionResult> => ipcRenderer.invoke("update:install"),
+  // Fires on any update-state change: a re-check found a version, download progress, download
+  // finished.
+  onUpdateState: subscribe<UpdateState>("update:state"),
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke("settings:get"),
   saveSettings: (partial: Partial<AppSettings>): Promise<SettingsSaveResult> =>
     ipcRenderer.invoke("settings:save", partial),

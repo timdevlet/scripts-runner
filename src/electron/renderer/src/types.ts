@@ -11,5 +11,6 @@ export type {
   SchedulerSnapshot,
 } from "../../../domain/scheduled.js";
 export type { ThemePreference } from "../../../domain/theme.js";
+export type { UpdateState } from "../../../domain/update.js";
 export type { LogEntry } from "../../../log.js";
 export type { AppSettings } from "../../settings.js";

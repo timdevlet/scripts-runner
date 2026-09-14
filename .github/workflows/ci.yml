@@ -51,17 +51,23 @@ jobs:
         include:
           - os: windows-latest
             name: Windows
-            # Single self-contained .exe — no installer, no admin rights.
-            dist: npm run dist:portable:win -- --publish never
-            artifact: windows-portable
-            path: release/*.exe
+            # nsis + portable, per the win targets in package.json: the installer is what
+            # electron-updater can actually apply, the portable .exe is the no-install option.
+            dist: npm run dist -- --win --x64 --publish never
+            artifact: windows-build
+            # latest.yml + .blockmap are the electron-updater metadata. The in-app updater
+            # points a generic feed at the release and reads latest.yml to find and verify the
+            # installer, so these are required assets, not extras.
+            path: |
+              release/*.exe
+              release/*.blockmap
+              release/latest.yml
           - os: macos-latest
             name: macOS
-            # macOS has no "portable" target; a zipped .app is the equivalent
-            # (unzip and run). Both arches, since the runner is arm64 and Intel
-            # Macs would otherwise get nothing.
+            # A zipped .app (unzip and run) for both arches — the runner is arm64, so Intel
+            # Macs would otherwise get nothing. No .dmg; macOS updates open in the browser.
             dist: npm run dist:portable:mac -- --publish never
-            artifact: macos-portable
+            artifact: macos-build
             path: release/*.zip
     runs-on: ${{ matrix.os }}
     steps:
@@ -102,11 +108,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          mapfile -t files < <(find dist -type f \( -name '*.exe' -o -name '*.zip' \) | sort)
-          echo "Found ${#files[@]} portable builds:"
+          mapfile -t files < <(find dist -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.blockmap' -o -name 'latest.yml' \) | sort)
+          echo "Found ${#files[@]} release files:"
           printf '  %s\n' "${files[@]}"
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "::error::No portable builds were found in the artifacts."
+            echo "::error::No installers or portable builds were found in the artifacts."
             exit 1
           fi
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then

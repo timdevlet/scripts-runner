@@ -20,6 +20,7 @@ import type { ThemePreference } from "../domain/theme.js";
 import { enableTimestamps, type LogEntry, logError, onLog } from "../log.js";
 import { installSchedulerIpc, type SchedulerBridge } from "./scheduler-ipc.js";
 import { type AppSettings, getSettings, saveSettings } from "./settings.js";
+import { installUpdateIpc, type UpdateBridge } from "./update-check.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +38,8 @@ const history: LogEntry[] = [];
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let schedulerBridge: SchedulerBridge | null = null;
+// The GitHub-releases update check; applies the update itself only on installed Windows builds.
+let updateBridge: UpdateBridge | null = null;
 let quitting = false;
 
 const DARK_BG = "#0d1117";
@@ -217,6 +220,9 @@ async function start(): Promise<void> {
     history.length = 0;
   });
   ipcMain.handle("app:version", () => app.getVersion());
+
+  // Update check + download/install IPC (src/electron/update-check.ts).
+  updateBridge = installUpdateIpc(() => win);
   ipcMain.handle("settings:get", () => getSettings());
   ipcMain.handle("settings:save", async (_e, partial: unknown) => {
     const raw = typeof partial === "object" && partial !== null ? partial : {};
@@ -252,6 +258,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", () => {
     quitting = true;
     schedulerBridge?.dispose();
+    updateBridge?.dispose();
     tray?.destroy();
   });
 }
