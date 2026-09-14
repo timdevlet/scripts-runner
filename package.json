@@ -75,6 +75,10 @@
         "owner": "timdevlet",
         "repo": "scripts-runner"
       }
-    ]
+    ],
+    "artifactName": "${name}-${version}-${arch}.${ext}",
+    "nsis": {
+      "artifactName": "${name}-Setup-${version}-${arch}.${ext}"
+    }
   }
 }

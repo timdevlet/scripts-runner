@@ -1,24 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { isNewerVersion, pickUpdateFromRelease } from "../src/domain/update.js";
 
-// Asset names as electron-builder actually produces them for this app (see the published
-// release): an NSIS installer, a portable .exe, and one zipped .app per macOS architecture.
+// Asset names as electron-builder actually produces them for this app: an NSIS installer, a
+// portable .exe, and one zipped .app per macOS architecture. Deliberately space-free — spaces
+// get hyphenated in latest.yml but dotted by GitHub on upload, and the updater 404s on the
+// difference (see build.artifactName in package.json).
 const DOWNLOAD = "https://github.com/timdevlet/scripts-runner/releases/download/0.2.0";
 const release = (over: Record<string, unknown> = {}) => ({
   tag_name: "0.2.0",
   html_url: "https://github.com/timdevlet/scripts-runner/releases/tag/0.2.0",
   assets: [
-    { name: "Command.Scheduler.Setup.0.2.0.exe", browser_download_url: `${DOWNLOAD}/setup.exe` },
     {
-      name: "Command.Scheduler.Setup.0.2.0.exe.blockmap",
+      name: "command-scheduler-Setup-0.2.0-x64.exe",
+      browser_download_url: `${DOWNLOAD}/setup.exe`,
+    },
+    {
+      name: "command-scheduler-Setup-0.2.0-x64.exe.blockmap",
       browser_download_url: `${DOWNLOAD}/setup.exe.blockmap`,
     },
-    { name: "Command.Scheduler.0.2.0.exe", browser_download_url: `${DOWNLOAD}/portable.exe` },
+    { name: "command-scheduler-0.2.0-x64.exe", browser_download_url: `${DOWNLOAD}/portable.exe` },
     {
-      name: "Command.Scheduler-0.2.0-arm64-mac.zip",
+      name: "command-scheduler-0.2.0-arm64.zip",
       browser_download_url: `${DOWNLOAD}/arm64.zip`,
     },
-    { name: "Command.Scheduler-0.2.0-mac.zip", browser_download_url: `${DOWNLOAD}/x64.zip` },
+    { name: "command-scheduler-0.2.0-x64.zip", browser_download_url: `${DOWNLOAD}/x64.zip` },
     { name: "latest.yml", browser_download_url: `${DOWNLOAD}/latest.yml` },
   ],
   ...over,
@@ -71,7 +76,7 @@ describe("pickUpdateFromRelease", () => {
     const onlyBlockmap = release({
       assets: [
         {
-          name: "Command.Scheduler.Setup.0.2.0.exe.blockmap",
+          name: "command-scheduler-Setup-0.2.0-x64.exe.blockmap",
           browser_download_url: `${DOWNLOAD}/setup.exe.blockmap`,
         },
       ],
@@ -79,6 +84,28 @@ describe("pickUpdateFromRelease", () => {
     // Nothing installable left, so it falls back to the release page rather than the sidecar.
     expect(pickUpdateFromRelease(onlyBlockmap, "0.1.2", "win32", "x64")?.url).toBe(
       "https://github.com/timdevlet/scripts-runner/releases/tag/0.2.0",
+    );
+  });
+
+  it("still understands the older dotted asset names", () => {
+    // Releases published before build.artifactName was pinned carry GitHub's dotted spellings.
+    const legacy = release({
+      assets: [
+        {
+          name: "Command.Scheduler.Setup.0.2.0.exe",
+          browser_download_url: `${DOWNLOAD}/legacy-setup.exe`,
+        },
+        {
+          name: "Command.Scheduler-0.2.0-arm64-mac.zip",
+          browser_download_url: `${DOWNLOAD}/legacy-arm64.zip`,
+        },
+      ],
+    });
+    expect(pickUpdateFromRelease(legacy, "0.1.2", "win32", "x64")?.url).toBe(
+      `${DOWNLOAD}/legacy-setup.exe`,
+    );
+    expect(pickUpdateFromRelease(legacy, "0.1.2", "darwin", "arm64")?.url).toBe(
+      `${DOWNLOAD}/legacy-arm64.zip`,
     );
   });
 
