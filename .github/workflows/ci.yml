@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # Release tags are bare (0.1.2) per scripts/release.mjs; `v0.1.2` is accepted too.
+    tags: ['v[0-9]*', '[0-9]*.[0-9]*.[0-9]*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (typecheck + biome)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: [lint, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            # The win targets in package.json are nsis + portable, so one run produces both
+            # the installer and the single self-contained .exe.
+            dist: npm run dist -- --win --x64 --publish never
+            artifact: windows-build
+            # latest.yml + .blockmap are electron-updater metadata: an auto-update reads
+            # latest.yml from the release to find and verify the installer.
+            path: |
+              release/*.exe
+              release/*.blockmap
+              release/latest.yml
+          - os: macos-latest
+            name: macOS
+            # dmg to install, zip to unzip-and-run; both arches because the runner is arm64
+            # and Intel Macs would otherwise get nothing.
+            dist: npm run dist -- --mac --arm64 --x64 --publish never
+            artifact: macos-build
+            path: |
+              release/*.dmg
+              release/*.zip
+              release/*.blockmap
+              release/latest-mac.yml
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build ${{ matrix.name }}
+        run: ${{ matrix.dist }}
+        env:
+          # No signing certificates in CI: keep electron-builder from looking for a keychain
+          # identity and failing the macOS build.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish release
+    needs: build
+    # Only publish on pushes to main (rolling "latest") or version tags (stable release).
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Publish binaries to a GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find dist -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name 'latest*.yml' \) | sort)
+          echo "Found ${#files[@]} binaries:"
+          printf '  %s\n' "${files[@]}"
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No installers or portable builds were found in the artifacts."
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            # Stable, versioned release from the pushed tag.
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              --target "$GITHUB_SHA"
+          else
+            # Rolling prerelease that always reflects the latest commit on main.
+            gh release delete latest --yes --cleanup-tag || true
+            gh release create latest "${files[@]}" \
+              --title "Latest (main)" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --notes "Automated build from the latest commit on main (\`${GITHUB_SHA}\`)."
+          fi
