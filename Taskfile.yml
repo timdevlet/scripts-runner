@@ -1,0 +1,26 @@
+version: '3'
+
+# Release tagging. Tags are bare (0.2.0, no leading `v`) and always match package.json.
+# The logic lives in scripts/release.mjs so the guards (clean tree, duplicate tag, semver)
+# are the same however a task is invoked.
+
+tasks:
+  tag:
+    desc: 'Tag an explicit version — task tag -- 0.2.0'
+    cmds:
+      - node scripts/release.mjs tag {{.CLI_ARGS}}
+
+  bump:
+    desc: 'Increment the version and tag it, 0.1.0 → 0.1.1 — task bump, or task bump -- minor'
+    cmds:
+      - node scripts/release.mjs bump {{.CLI_ARGS}}
+
+  push:
+    desc: Push the current branch and the newest release tag to origin
+    cmds:
+      - node scripts/release.mjs push
+
+  release:
+    desc: 'Bump, tag, and push in one step — task release, or task release -- minor'
+    cmds:
+      - node scripts/release.mjs release {{.CLI_ARGS}}
