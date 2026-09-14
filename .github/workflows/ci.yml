@@ -51,27 +51,18 @@ jobs:
         include:
           - os: windows-latest
             name: Windows
-            # The win targets in package.json are nsis + portable, so one run produces both
-            # the installer and the single self-contained .exe.
-            dist: npm run dist -- --win --x64 --publish never
-            artifact: windows-build
-            # latest.yml + .blockmap are electron-updater metadata: an auto-update reads
-            # latest.yml from the release to find and verify the installer.
-            path: |
-              release/*.exe
-              release/*.blockmap
-              release/latest.yml
+            # Single self-contained .exe — no installer, no admin rights.
+            dist: npm run dist:portable:win -- --publish never
+            artifact: windows-portable
+            path: release/*.exe
           - os: macos-latest
             name: macOS
-            # dmg to install, zip to unzip-and-run; both arches because the runner is arm64
-            # and Intel Macs would otherwise get nothing.
-            dist: npm run dist -- --mac --arm64 --x64 --publish never
-            artifact: macos-build
-            path: |
-              release/*.dmg
-              release/*.zip
-              release/*.blockmap
-              release/latest-mac.yml
+            # macOS has no "portable" target; a zipped .app is the equivalent
+            # (unzip and run). Both arches, since the runner is arm64 and Intel
+            # Macs would otherwise get nothing.
+            dist: npm run dist:portable:mac -- --publish never
+            artifact: macos-portable
+            path: release/*.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -111,11 +102,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          mapfile -t files < <(find dist -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name 'latest*.yml' \) | sort)
-          echo "Found ${#files[@]} binaries:"
+          mapfile -t files < <(find dist -type f \( -name '*.exe' -o -name '*.zip' \) | sort)
+          echo "Found ${#files[@]} portable builds:"
           printf '  %s\n' "${files[@]}"
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "::error::No installers or portable builds were found in the artifacts."
+            echo "::error::No portable builds were found in the artifacts."
             exit 1
           fi
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
