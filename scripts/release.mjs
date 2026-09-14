@@ -109,6 +109,9 @@ function tag(versionArg) {
 function bump(levelArg = "patch") {
   const level = String(levelArg).trim() || "patch";
   if (!LEVELS.includes(level)) fail(`unknown level "${level}" — use one of: ${LEVELS.join(", ")}`);
+  // Checked before the bump is announced, so a dirty tree doesn't print a version change
+  // that never happens.
+  requireCleanTree();
   const from = baseVersion();
   const to = next(from, level);
   console.log(`release: ${level} bump ${format(from)} → ${format(to)}`);
