@@ -762,7 +762,6 @@ function truncateForFilename(s, maxChars, maxBytes) {
 function sanitizeName(raw) {
   let s = String(raw ?? "").normalize("NFC");
   s = s.replace(/[™®©]/g, "");            // trademark, registered, copyright
-  s = s.replace(/[<>:"/\\|?* -]/g, " ");      // illegal on Windows
   s = s.replace(/\s+/g, " ").trim();
   s = s.replace(/[. ]+$/, "");                           // Windows strips these silently
   s = truncateForFilename(s, 80, 150);
