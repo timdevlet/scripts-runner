@@ -31,6 +31,7 @@ import {
   scheduledCommandsPath,
 } from "../scheduled-store.js";
 import { createScheduler, type Scheduler } from "../scheduler.js";
+import { installScriptEditIpc } from "./script-edit.js";
 
 // Snapshot pushes are coalesced: a chatty command emits a line at a time, and the renderer only
 // needs to repaint at human speed.
@@ -285,10 +286,18 @@ export async function installSchedulerIpc(
     }
   });
 
+  // "Edit in VS Code": its own module, but it reads scripts out of this scheduler and is torn
+  // down with the rest of the scripts IPC.
+  const scriptEdit = installScriptEditIpc({
+    getWindow,
+    getScript: (id) => scheduler.scripts().find((s) => s.id === id) ?? null,
+  });
+
   return {
     dispose() {
       unsubscribe();
       if (pushTimer) clearTimeout(pushTimer);
+      scriptEdit.dispose();
       scheduler.dispose();
       for (const channel of [
         "scheduler:list",

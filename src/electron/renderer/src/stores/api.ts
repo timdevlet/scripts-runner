@@ -8,6 +8,8 @@ import type { AppAPI } from "../../../preload.js";
 export type {
   AppAPI,
   CronPreview,
+  JsScriptEditSource,
+  JsScriptEditState,
   JsScriptsImportResult,
   JsScriptsResult,
   ScheduledCommandsResult,
@@ -46,4 +48,7 @@ export const api: AppAPI = {
   stopJsScript: (scriptId) => window.appAPI.stopJsScript(scriptId),
   exportJsScripts: () => window.appAPI.exportJsScripts(),
   importJsScripts: () => window.appAPI.importJsScripts(),
+  editJsScript: (scriptId) => window.appAPI.editJsScript(scriptId),
+  onJsScriptEditSource: (cb) => window.appAPI.onJsScriptEditSource(cb),
+  onJsScriptEditState: (cb) => window.appAPI.onJsScriptEditState(cb),
 };

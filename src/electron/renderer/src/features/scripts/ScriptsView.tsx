@@ -8,6 +8,7 @@ import { ConfirmPopover } from "../../components/ConfirmPopover";
 import { ErrorText } from "../../components/ErrorText";
 import { Field } from "../../components/Field";
 import {
+  CodeIcon,
   ExportIcon,
   ImportIcon,
   LogsIcon,
@@ -54,6 +55,7 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
 
   const selected = scripts.find((s) => s.id === selectedId) ?? null;
   const isRunning = selected != null && snapshot.running.includes(selected.id);
+  const isEditingExternally = selected != null && store.editingExternally.includes(selected.id);
   const runs = selected ? snapshot.runs.filter((r) => r.commandId === selected.id) : [];
   const params = selected ? extractScriptParams(selected.source) : [];
 
@@ -80,6 +82,16 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
       await api.stopJsScript(script.id);
     } finally {
       setBusyId(null);
+    }
+  };
+
+  // Hand the script to VS Code. The main process owns the temp file and the watcher; saves come
+  // back as source edits, so there is nothing to poll or merge here.
+  const onEditExternally = async (script: JsScript) => {
+    const result = await api.editJsScript(script.id);
+    if (!result.ok) onToast("error", result.error || "Could not open VS Code.");
+    else if (!store.editingExternally.includes(script.id)) {
+      onToast("success", "Opened in VS Code — saves come back here.");
     }
   };
 
@@ -185,6 +197,13 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                     <PlayIcon /> Run now
                   </Button>
                 )}
+                <Button
+                  disabled={store.readOnly}
+                  onClick={() => void onEditExternally(selected)}
+                  title="Open this script in VS Code — saves there come back to the app"
+                >
+                  <CodeIcon /> {isEditingExternally ? "Show in VS Code" : "Edit in VS Code"}
+                </Button>
                 <ConfirmPopover
                   triggerClassName="sched-delete"
                   triggerVariant="danger"
@@ -233,9 +252,18 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                 disabled={store.readOnly}
               />
               <p className="hint">
-                Local JavaScript, run with <code>node</code>. Holes like <code>{"{{dir}}"}</code>{" "}
-                become fields below; they are JS expressions, so use <code>params.dir</code> inside
-                strings.
+                {isEditingExternally ? (
+                  <>
+                    Open in VS Code — saving there updates this script. Close the tab to end the
+                    session; edits made here in the meantime are replaced by the next save.
+                  </>
+                ) : (
+                  <>
+                    Local JavaScript, run with <code>node</code>. Holes like{" "}
+                    <code>{"{{dir}}"}</code> become fields below; they are JS expressions, so use{" "}
+                    <code>params.dir</code> inside strings.
+                  </>
+                )}
               </p>
               <ScriptParamFields
                 params={params}

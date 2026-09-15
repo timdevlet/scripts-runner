@@ -6,6 +6,7 @@ import type { JsScript } from "../domain/js-script.js";
 import type { RunLine, ScheduledCommand, SchedulerSnapshot } from "../domain/scheduled.js";
 import type { UpdateState } from "../domain/update.js";
 import type { LogEntry } from "../log.js";
+import type { ScriptEditResult } from "./script-edit.js";
 import type { AppSettings } from "./settings.js";
 import type { UpdateActionResult, UpdateCheckResult } from "./update-check.js";
 
@@ -36,6 +37,9 @@ export type JsScriptsImportResult =
   | { ok: true; scripts: JsScript[] }
   | { ok: false; cancelled?: true; error?: string };
 export type SettingsSaveResult = { ok: true } | { ok: false; error?: string };
+// A save in the external editor, and whether a script currently has an editor session open.
+export type JsScriptEditSource = { id: string; source: string };
+export type JsScriptEditState = { id: string; open: boolean };
 
 const subscribe =
   <T>(channel: string) =>
@@ -101,6 +105,13 @@ const appAPI = {
     ipcRenderer.invoke("scripts:stop", scriptId),
   exportJsScripts: (): Promise<SchedulerExportResult> => ipcRenderer.invoke("scripts:export"),
   importJsScripts: (): Promise<JsScriptsImportResult> => ipcRenderer.invoke("scripts:import"),
+  // Open a script in VS Code (see src/electron/script-edit.ts). The script's source is written to
+  // a temp file there; saves arrive back on onJsScriptEditSource, and the session's start and end
+  // on onJsScriptEditState.
+  editJsScript: (scriptId: string): Promise<ScriptEditResult> =>
+    ipcRenderer.invoke("scripts:edit", scriptId),
+  onJsScriptEditSource: subscribe<JsScriptEditSource>("scripts:edit-source"),
+  onJsScriptEditState: subscribe<JsScriptEditState>("scripts:edit-state"),
 };
 
 export type AppAPI = typeof appAPI;

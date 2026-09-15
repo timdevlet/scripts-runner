@@ -105,16 +105,6 @@ function encodeICO(png, size) {
   return Buffer.concat([header, entry, png]);
 }
 
-function distToSegment(px, py, x0, y0, x1, y1) {
-  const dx = x1 - x0;
-  const dy = y1 - y0;
-  const len2 = dx * dx + dy * dy;
-  if (len2 === 0) return Math.hypot(px - x0, py - y0);
-  let t = ((px - x0) * dx + (py - y0) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px - (x0 + t * dx), py - (y0 + t * dy));
-}
-
 function coverage(dist, halfWidth) {
   const edge = 0.65;
   if (dist >= halfWidth + edge) return 0;
@@ -122,34 +112,17 @@ function coverage(dist, halfWidth) {
   return 1 - (dist - (halfWidth - edge)) / (2 * edge);
 }
 
-// Clock face: ring + 12 o'clock hour hand + ~2 o'clock minute hand. `fill` is [r,g,b] for the
-// glyph; alpha comes from coverage so the tray template stays a clean silhouette.
-function renderClock(size, fill) {
+// Solid disc on a transparent field. Used for the tray glyph, where alpha comes from coverage so
+// the macOS template image stays a clean silhouette.
+function renderDisc(size, fill, radiusRatio = 0.36) {
   const rgba = Buffer.alloc(size * size * 4);
-  const cx = (size - 1) / 2;
-  const cy = (size - 1) / 2;
-  const r = size * 0.38;
-  const stroke = Math.max(1.05, size * 0.075);
-  const hourLen = r * 0.48;
-  const minuteLen = r * 0.72;
-  // Minute hand at ~2 o'clock (60° from 12, clockwise).
-  const minuteAngle = Math.PI / 3;
-  const hourX = cx;
-  const hourY = cy - hourLen;
-  const minuteX = cx + Math.sin(minuteAngle) * minuteLen;
-  const minuteY = cy - Math.cos(minuteAngle) * minuteLen;
+  const c = (size - 1) / 2;
+  const r = size * radiusRatio;
   const [fr, fg, fb] = fill;
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const dx = x - cx;
-      const dy = y - cy;
-      const d = Math.hypot(dx, dy);
-      const ring = coverage(Math.abs(d - r), stroke / 2);
-      const hub = coverage(d, Math.max(0.8, size * 0.045));
-      const hour = coverage(distToSegment(x, y, cx, cy, hourX, hourY), stroke / 2.4);
-      const minute = coverage(distToSegment(x, y, cx, cy, minuteX, minuteY), stroke / 2.6);
-      const a = Math.min(1, ring + hub + hour + minute);
+      const a = coverage(Math.hypot(x - c, y - c), r);
       if (a <= 0) continue;
       const i = (y * size + x) * 4;
       rgba[i] = fr;
@@ -161,13 +134,26 @@ function renderClock(size, fill) {
   return rgba;
 }
 
+// App icon: black disc composited over an opaque white square.
+function renderAppIcon(size) {
+  const rgba = renderDisc(size, [0, 0, 0], 0.32);
+  for (let i = 0; i < rgba.length; i += 4) {
+    const a = rgba[i + 3] / 255;
+    rgba[i] = Math.round(rgba[i] * a + 255 * (1 - a));
+    rgba[i + 1] = Math.round(rgba[i + 1] * a + 255 * (1 - a));
+    rgba[i + 2] = Math.round(rgba[i + 2] * a + 255 * (1 - a));
+    rgba[i + 3] = 255;
+  }
+  return rgba;
+}
+
 async function generateIcons() {
   await mkdir(buildDir, { recursive: true });
   await mkdir(out, { recursive: true });
 
-  const appIcon = (size) => encodePNG(size, renderClock(size, [37, 99, 235]));
-  const trayBlack = (size) => encodePNG(size, renderClock(size, [0, 0, 0]));
-  const trayWhite = (size) => encodePNG(size, renderClock(size, [255, 255, 255]));
+  const appIcon = (size) => encodePNG(size, renderAppIcon(size));
+  const trayBlack = (size) => encodePNG(size, renderDisc(size, [0, 0, 0]));
+  const trayWhite = (size) => encodePNG(size, renderDisc(size, [255, 255, 255]));
 
   const png512 = appIcon(512);
   const png256 = appIcon(256);

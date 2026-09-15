@@ -14,12 +14,26 @@ export function useScripts() {
   const [snapshot, setSnapshot] = useState<SchedulerSnapshot>(EMPTY_SNAPSHOT);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  // Ids currently open in VS Code (see src/electron/script-edit.ts) — the panel says so, because
+  // while a session is open the external file, not the in-app editor, is what the next save wins
+  // with.
+  const [editingExternally, setEditingExternally] = useState<string[]>([]);
   const readOnly = useRef(false);
 
   useEffect(() => {
     let alive = true;
     const unsubscribe = api.onSchedulerUpdate((next) => {
       if (alive) setSnapshot(next);
+    });
+    // A save in VS Code lands here as a normal source edit, so it autosaves like any other.
+    const unsubscribeSource = api.onJsScriptEditSource(({ id, source }) => {
+      if (alive) setScripts((list) => list.map((s) => (s.id === id ? { ...s, source } : s)));
+    });
+    const unsubscribeState = api.onJsScriptEditState(({ id, open }) => {
+      if (!alive) return;
+      setEditingExternally((ids) =>
+        open ? (ids.includes(id) ? ids : [...ids, id]) : ids.filter((x) => x !== id),
+      );
     });
     api.getJsScripts().then(
       (result) => {
@@ -40,6 +54,8 @@ export function useScripts() {
     return () => {
       alive = false;
       unsubscribe();
+      unsubscribeSource();
+      unsubscribeState();
     };
   }, []);
 
@@ -90,6 +106,7 @@ export function useScripts() {
     snapshot,
     error,
     loading,
+    editingExternally,
     readOnly: readOnly.current,
     add,
     remove,

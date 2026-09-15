@@ -20,8 +20,11 @@
 .settings-view {
   overflow: auto;
 
+  /* Centered column: the groups keep a readable width, and the leftover space is split evenly
+     rather than all piling up on the right of a wide window. */
   .settings-group {
     max-width: 640px;
+    margin-inline: auto;
   }
 }
 
