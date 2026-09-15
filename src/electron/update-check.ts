@@ -17,11 +17,17 @@ import { app, ipcMain, shell } from "electron";
 // a plain property access that works.
 import { autoUpdater } from "electron-updater";
 import { errorText } from "../domain/errors.js";
-import { pickUpdateFromRelease, type UpdateInfo, type UpdateState } from "../domain/update.js";
+import { pickUpdateFromReleases, type UpdateInfo, type UpdateState } from "../domain/update.js";
 import { log, logError } from "../log.js";
 
 const REPO = "timdevlet/scripts-runner";
-const RELEASES_LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+// The release *list*, not /releases/latest. /releases/latest 404s until a non-prerelease release
+// exists, and CI publishes a rolling "latest" prerelease on every push to main — so that endpoint
+// answered 404 forever while releases plainly existed, and the old code read that 404 as "no
+// update". The list endpoint answers [] instead, and domain/update.ts filters out the rolling
+// prerelease on the merits (its tag isn't a semver version). One page is plenty: 30 releases back
+// is far past anything newer than what's running.
+const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=30`;
 
 // A tray app runs for weeks — re-check periodically so the button eventually appears without a
 // restart. The renderer's mount-time pull within CACHE_TTL_MS of a check reuses the cached answer.
@@ -65,22 +71,22 @@ export function installUpdateIpc(getWindow: () => Electron.BrowserWindow | null)
   };
 
   async function fetchLatest(): Promise<UpdateCheckResult> {
-    // GitHub rejects requests without a User-Agent. /releases/latest already excludes
-    // prereleases, so the rolling "latest" (main) prerelease never shows up here.
-    const res = await fetch(RELEASES_LATEST_API, {
+    // GitHub rejects requests without a User-Agent.
+    const res = await fetch(RELEASES_API, {
       headers: { Accept: "application/vnd.github+json", "User-Agent": "scripts-runner" },
       // Without a timeout a hung connection pins `inflight` forever and every later check
       // returns the same never-settling promise — the update UI wedges for the session.
       signal: AbortSignal.timeout(15_000),
     });
-    // 404 = no (non-prerelease) release published yet; that's "no update", not an error.
-    if (res.status === 404) {
-      found = null;
-    } else if (!res.ok) {
-      return { ok: false, error: `GitHub answered ${res.status} ${res.statusText}` };
-    } else {
-      found = pickUpdateFromRelease(await res.json(), app.getVersion(), process.platform);
+    // Every non-2xx is reported now, 404 included. On the list endpoint a 404 means the repo is
+    // gone or renamed — a real fault. Swallowing it as "up to date" is what hid the broken check
+    // for four releases, so the rule here is: no silent nulls.
+    if (!res.ok) {
+      const message = `GitHub answered ${res.status} ${res.statusText}`;
+      logError(`Update check failed: ${message}`);
+      return { ok: false, error: message };
     }
+    found = pickUpdateFromReleases(await res.json(), app.getVersion(), process.platform);
     lastChecked = Date.now();
     // Never regress a download in flight (or done) because a periodic re-check came back with
     // the same release; a *different* release resets the flow.
@@ -99,10 +105,13 @@ export function installUpdateIpc(getWindow: () => Electron.BrowserWindow | null)
   }
 
   // One check at a time, and a fresh-enough answer is reused — the renderer's mount-time pull,
-  // the startup check, and the periodic tick all funnel through here.
-  function check(): Promise<UpdateCheckResult> {
+  // the startup check, and the periodic tick all funnel through here. `force` skips the cache:
+  // when someone clicks "Check for updates" they mean now, and replaying a ten-minute-old answer
+  // makes the button look broken. It still joins an in-flight request rather than starting a
+  // second one.
+  function check(force = false): Promise<UpdateCheckResult> {
     if (inflight) return inflight;
-    if (Date.now() - lastChecked < CACHE_TTL_MS)
+    if (!force && Date.now() - lastChecked < CACHE_TTL_MS)
       return Promise.resolve({ ok: true, update: state });
     const run: Promise<UpdateCheckResult> = fetchLatest()
       .catch((err): UpdateCheckResult => ({ ok: false, error: errorText(err) }))
@@ -124,7 +133,7 @@ export function installUpdateIpc(getWindow: () => Electron.BrowserWindow | null)
   };
   autoUpdater.on("download-progress", onProgress);
 
-  ipcMain.handle("update:check", () => check());
+  ipcMain.handle("update:check", (_event, force: unknown) => check(force === true));
 
   // Download the update (install mode), or hand it to the browser. In install mode this resolves
   // when the download has finished (or failed) — progress reaches the renderer via update:state

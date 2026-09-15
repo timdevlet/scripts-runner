@@ -39,7 +39,9 @@ export function SettingsView({ initialSettings }: { initialSettings: AppSettings
   const onCheck = async (): Promise<void> => {
     setChecking(true);
     setCheckNote("");
-    const result = await api.checkForUpdate();
+    // Forced: this check is a click, so it must hit the network rather than replay a cached
+    // answer from the startup check.
+    const result = await api.checkForUpdate(true);
     setChecking(false);
     // An update turns into the row above via the store push, so only the quiet answers land here.
     if (!result.ok) setCheckNote(result.error);

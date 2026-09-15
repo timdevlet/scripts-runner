@@ -14,6 +14,19 @@
 //
 // game     "all", or one appid, or a comma list. Named appids bypass the
 //          library scan and the type filter entirely.
+//
+// Every game is looked up by appid first and, if SteamGridDB has never heard of
+// that appid, by the name Steam holds for it. That second path is what covers
+// non-Steam games: a shortcut you added yourself has a Steam-generated appid
+// that exists nowhere on SteamGridDB, so the name is the only way in. Its art
+// still files under that appid, which is the one Steam itself uses for the
+// game's grid images, so the companion script applies it like any other.
+//
+// A name lookup only counts when it matches a SteamGridDB title exactly, once
+// punctuation and case are ignored. Anything looser downloads the wrong game's
+// art: searching "Baldurs Gate 3" turns up "Baldur\'s Gate 3 Toolkit" and plain
+// "Baldur\'s Gate" above the game itself. A near-miss is reported with what
+// SteamGridDB does have, so the name can be corrected in Steam.
 // steam / account   "auto", or an explicit Steam folder / account id.
 // styles   "any", or a comma list: alternate, blurred, material, white_logo.
 // types    static, animated, or any.
@@ -29,6 +42,7 @@
 // as 620 or 440 still resolve correctly. Do not reorder the fields.
 // That script will also report ranks 2..N as duplicates for the same appid and
 // use rank 1 — correct, but noisy on a large folder.
+//
 
 import fs from "node:fs";
 import path from "node:path";
@@ -77,22 +91,26 @@ function csv(value) {
     .filter(Boolean);
 }
 
+// The :kind after a name picks the control the Scripts tab renders for the
+// field — a toggle, a dropdown, a checklist, a folder picker. Every one of them
+// still hands this script a plain string, so the parsing below is unchanged.
 const opts = {
-  outDir: unset({{outDir}}),
-  apply: isTrue({{apply=false}}),
+  outDir: unset({{outDir:dir}}),
+  apply: isTrue({{apply:bool=false}}),
   limit: num({{limit=5}}, 5, 1, 50),
   apiKey: opt({{apiKey=env}}, "env"),
   envFile: String({{envFile=.env}}).trim() || ".env",
-  steam: opt({{steam=auto}}, "auto"),
+  steam: opt({{steam:dir=auto}}, "auto"),
   account: opt({{account=auto}}, "auto"),
-  allAccounts: isTrue({{allAccounts=false}}),
+  allAccounts: isTrue({{allAccounts:bool=false}}),
   game: opt({{game=all}}, "all"),
-  skipExisting: isTrue({{skipExisting=true}}),
-  styles: opt({{styles=any}}, "any"),
-  types: opt({{types=static}}, "any"),
-  nsfw: triState({{nsfw=false}}, "false"),
-  humor: triState({{humor=any}}, "any"),
-  includeNonGames: isTrue({{includeNonGames=false}}),
+  skipExisting: isTrue({{skipExisting:bool=true}}),
+  // A checklist, so an empty selection is "no style filter" — what "any" meant.
+  styles: unset({{styles:many(alternate|blurred|material|white_logo)}}),
+  types: opt({{types:one(static|animated|any)=static}}, "any"),
+  nsfw: triState({{nsfw:one(false|true|any)=false}}, "false"),
+  humor: triState({{humor:one(any|true|false)=any}}, "any"),
+  includeNonGames: isTrue({{includeNonGames:bool=false}}),
   concurrency: num({{concurrency=4}}, 4, 1, 8),
   maxMB: num({{maxMB=25}}, 25, 1, 500),
 };
@@ -120,6 +138,10 @@ const ALLOWED_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 // Partial downloads live under this prefix until they are complete, so a killed
 // run can never leave a truncated file that looks finished to skipExisting.
 const TEMP_PREFIX = ".sgdb-part-";
+
+// How many SteamGridDB titles to list when a name lookup finds no exact match.
+// Enough to spot the spelling that would have worked.
+const NEAR_MISS_CAP = 5;
 
 function isDir(p) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
@@ -475,21 +497,81 @@ function discoverLocalConfigAppids(steamRoot, accountId) {
   return vdfAppidsUnder(text, "software/valve/steam/apps");
 }
 
+// Non-Steam games the user added to Steam themselves. They live in a small
+// binary VDF, not the text kind the rest of this file parses:
+//
+//   0x00 <key>\0 ...        nested map
+//   0x01 <key>\0 <value>\0  string
+//   0x02 <key>\0 <4 bytes>  int32, little-endian
+//   0x08                    end of map
+//
+// Only two fields matter, and both can be read positionally without a full
+// parser: the appid Steam generated for the shortcut, and its AppName. The
+// appid is stored signed but Steam names the shortcut\'s grid files with the
+// UNSIGNED form (3506241571.png, 3506241571_hero.png), so that is what this
+// returns — it has to match, or the art lands under a name Steam never reads.
+function readShortcuts(file) {
+  const found = new Map();
+  let buf;
+  try { buf = fs.readFileSync(file); } catch { return found; }
+
+  // Each shortcut is one entry in the top-level map, so walking appid markers in
+  // order and taking the AppName that follows each keeps the two paired.
+  const APPID_KEY = Buffer.from("\x02appid\x00", "binary");
+  const NAME_KEY = Buffer.from("\x01AppName\x00", "binary");
+  let at = 0;
+  while (at < buf.length) {
+    const appidAt = buf.indexOf(APPID_KEY, at);
+    if (appidAt === -1) break;
+    const valueAt = appidAt + APPID_KEY.length;
+    if (valueAt + 4 > buf.length) break;
+    const appid = String(buf.readUInt32LE(valueAt));
+
+    const nameAt = buf.indexOf(NAME_KEY, valueAt + 4);
+    if (nameAt === -1) break;
+    const from = nameAt + NAME_KEY.length;
+    const end = buf.indexOf(0, from);
+    const name = buf.toString("utf8", from, end === -1 ? buf.length : end).trim();
+    // A shortcut with a blank name is one Steam itself cannot label; there is
+    // nothing to search SteamGridDB for.
+    if (name) found.set(appid, name);
+    at = end === -1 ? buf.length : end + 1;
+  }
+  return found;
+}
+
+// appid -> name for every non-Steam shortcut, across the accounts in play.
+function discoverShortcuts(steamRoot, accounts) {
+  const shortcuts = new Map();
+  for (const accountId of accounts) {
+    const file = path.join(steamRoot, "userdata", accountId, "config", "shortcuts.vdf");
+    if (!isFile(file)) continue;
+    for (const [appid, name] of readShortcuts(file)) shortcuts.set(appid, name);
+  }
+  return shortcuts;
+}
+
 // Union every source, remembering where each appid came from. "0 games found"
 // is the likeliest support question, and the per-source counts answer it.
 function discoverLibrary(steamRoot, accounts) {
+  const shortcuts = discoverShortcuts(steamRoot, accounts);
   const sources = {
     librarycache: discoverLibraryCacheAppids(steamRoot),
     appmanifest: discoverManifestAppids(steamRoot),
     libraryfolders: discoverLibraryFolderAppids(steamRoot),
     localconfig: new Set(),
+    shortcuts: new Set(shortcuts.keys()),
   };
   for (const accountId of accounts) {
     for (const id of discoverLocalConfigAppids(steamRoot, accountId)) sources.localconfig.add(id);
   }
   const all = new Set();
   for (const set of Object.values(sources)) for (const id of set) all.add(id);
-  return { appids: all, counts: Object.fromEntries(Object.entries(sources).map(([k, v]) => [k, v.size])) };
+  return {
+    appids: all,
+    shortcuts,
+    counts: Object.fromEntries(Object.entries(sources).map(([k, v]) => [k, v.size])),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -631,16 +713,24 @@ function isGameType(type) {
 
 // Merge the two name sources and attach a type. Installed-game names win;
 // appinfo.vdf fills the gaps and is the only source of a type.
-function resolveLibraryGames(steamRoot, appids, onWarn) {
+function resolveLibraryGames(steamRoot, appids, shortcuts, onWarn) {
   const manifestNames = discoverGameNames(steamRoot);
   const appInfo = discoverAppInfo(steamRoot, appids, onWarn);
   const out = new Map();
   for (const id of appids) {
     const entry = appInfo.get(id);
+    // A shortcut exists in neither the manifests nor appinfo.vdf, so its own
+    // name is the only one there is — and it is a game by construction: the user
+    // added it to their library by hand. Saying so keeps it out of the type
+    // filter, which would otherwise drop it as "unknown".
+    const shortcutName = shortcuts?.get(id);
     out.set(id, {
       appid: id,
-      name: manifestNames.get(id) || entry?.name || null,
-      type: entry?.type || null,
+      name: shortcutName || manifestNames.get(id) || entry?.name || null,
+      type: shortcutName ? "game" : entry?.type || null,
+      // Marks an appid Steam invented for this machine. It is not the game's
+      // identity and must not end up in a filename — see resolveShortcut.
+      shortcut: Boolean(shortcutName),
     });
   }
   return out;
@@ -672,7 +762,7 @@ function truncateForFilename(s, maxChars, maxBytes) {
 function sanitizeName(raw) {
   let s = String(raw ?? "").normalize("NFC");
   s = s.replace(/[™®©]/g, "");            // trademark, registered, copyright
-  s = s.replace(/[<>:"/\\|?*-]/g, " ");      // illegal on Windows
+  s = s.replace(/[<>:"/\\|?* -]/g, " ");      // illegal on Windows
   s = s.replace(/\s+/g, " ").trim();
   s = s.replace(/[. ]+$/, "");                           // Windows strips these silently
   s = truncateForFilename(s, 80, 150);
@@ -913,24 +1003,44 @@ async function fetchHeroes(apiFetch, endpoint, options) {
 const normalizeTitle = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 // Taking data[0] from autocomplete without checking maps "Half-Life 2 RTX" onto
-// "Half-Life 2" and downloads art for the wrong game. Accept an exact normalized
-// match, or a containment where the two titles are close in length.
-function confidentMatch(wanted, candidates) {
+// "Half-Life 2" and downloads art for the wrong game. Only an exact title wins:
+// case, punctuation and spacing are ignored, nothing else is. Everything looser
+// that was tried here picked something wrong — "Baldurs Gate 3" matches
+// "Baldur\'s Gate 3 Toolkit" on containment and plain "Baldur\'s Gate" on length,
+// and both download art for a different product than the one asked for.
+function exactMatch(wanted, candidates) {
   const target = normalizeTitle(wanted);
   if (!target) return null;
   for (const candidate of candidates) {
-    const other = normalizeTitle(candidate?.name);
-    if (!other) continue;
-    if (other === target) return { game: candidate, exact: true };
-  }
-  for (const candidate of candidates) {
-    const other = normalizeTitle(candidate?.name);
-    if (!other) continue;
-    const contains = other.includes(target) || target.includes(other);
-    const ratio = Math.min(other.length, target.length) / Math.max(other.length, target.length);
-    if (contains && ratio >= 0.6) return { game: candidate, exact: false };
+    if (normalizeTitle(candidate?.name) === target) return candidate;
   }
   return null;
+}
+
+// The Steam appid SteamGridDB records for one of its games. The plain
+// /games/id/ response does not carry it; ?platformdata=steam is what adds the
+// external_platform_data block. Null when the game genuinely is not on Steam.
+async function steamAppidFor(apiFetch, sgdbId) {
+  const body = await apiFetch(`/games/id/${sgdbId}`, { platformdata: "steam" });
+  const entries = body?.external_platform_data?.steam;
+  const id = Array.isArray(entries) && entries.length ? String(entries[0]?.id ?? "") : "";
+  return /^\d+$/.test(id) ? id : null;
+}
+
+// What SteamGridDB did return, for a name that matched nothing exactly. Printing
+// them is the difference between "not found" and a one-word fix in Steam.
+function nearMissNames(candidates) {
+  return candidates
+    .map((candidate) => candidate?.name)
+    .filter(Boolean)
+    .slice(0, NEAR_MISS_CAP);
+}
+
+async function searchGames(apiFetch, term) {
+  const query = sanitizeName(term);
+  if (!query) return [];
+  const body = await apiFetch(`/search/autocomplete/${encodeURIComponent(query)}`);
+  return Array.isArray(body) ? body : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -1075,6 +1185,41 @@ function fatalReason(err) {
 // Resolve a game on SteamGridDB and return its hero list. The appid lookup
 // covers essentially everything on Steam; the name search is the fallback for
 // delisted or very new appids, and is unavailable for appids with no name.
+// A non-Steam shortcut, resolved to the real game behind it. Steam assigns the
+// shortcut an appid that is local to this machine — it changes if the shortcut
+// is recreated, differs on another install, and names nothing on SteamGridDB —
+// so the only usable identity is the name, and the only durable id is the Steam
+// appid SteamGridDB reports for the game that name matches.
+//
+// Returns where to fetch heroes from, plus the appid and name the downloaded
+// files should carry. Null when the name matches nothing exactly.
+async function resolveShortcut(apiFetch, game, lines) {
+  if (!game.name) {
+    lines.push([`  ${label(game)} non-Steam shortcut with no name to search for`, "warn"]);
+    return null;
+  }
+  const candidates = await searchGames(apiFetch, game.name);
+  const match = exactMatch(game.name, candidates);
+  if (!match) {
+    lines.push([`  ${label(game)} no exact name match on SteamGridDB`, "warn"]);
+    for (const name of nearMissNames(candidates)) {
+      lines.push([`      SteamGridDB has: ${name}`, "item"]);
+    }
+    return null;
+  }
+  const steamAppid = await steamAppidFor(apiFetch, match.id);
+  lines.push([
+    `  ${label(game)} non-Steam shortcut -> "${match.name}"` +
+      (steamAppid ? ` (Steam appid ${steamAppid})` : " (not on Steam — keeping the shortcut id)"),
+    "info",
+  ]);
+  return {
+    endpoint: `/heroes/game/${match.id}`,
+    appid: steamAppid || game.appid,
+    name: match.name,
+  };
+}
+
 async function findHeroes(apiFetch, game, options, lines) {
   try {
     await apiFetch(`/games/steam/${game.appid}`);
@@ -1083,21 +1228,24 @@ async function findHeroes(apiFetch, game, options, lines) {
     if (!(err instanceof HttpError) || err.status !== 404) throw err;
   }
 
+  // SteamGridDB has never seen this appid. For a non-Steam shortcut that is the
+  // normal case rather than an error — Steam invented the appid locally — so the
+  // name Steam holds for it is what gets looked up instead.
   if (!game.name) {
     lines.push([`  ${label(game)} not on SteamGridDB (and no local name to search for)`, "warn"]);
     return null;
   }
 
-  const candidates = await apiFetch(`/search/autocomplete/${encodeURIComponent(sanitizeName(game.name))}`);
-  const match = confidentMatch(game.name, Array.isArray(candidates) ? candidates : []);
+  const candidates = await searchGames(apiFetch, game.name);
+  const match = exactMatch(game.name, candidates);
   if (!match) {
-    lines.push([`  ${label(game)} not on SteamGridDB`, "warn"]);
+    const near = nearMissNames(candidates);
+    lines.push([`  ${label(game)} no exact name match on SteamGridDB`, "warn"]);
+    for (const name of near) lines.push([`      SteamGridDB has: ${name}`, "item"]);
     return null;
   }
-  if (!match.exact) {
-    lines.push([`  ${label(game)} fuzzy match -> SteamGridDB "${match.game.name}" (id ${match.game.id})`, "warn"]);
-  }
-  return await fetchHeroes(apiFetch, `/heroes/game/${match.game.id}`, options);
+  lines.push([`  ${label(game)} matched by name -> SteamGridDB "${match.name}" (id ${match.id})`, "info"]);
+  return await fetchHeroes(apiFetch, `/heroes/game/${match.id}`, options);
 }
 
 // Everything one game needs. Log lines are collected rather than printed: with
@@ -1108,31 +1256,45 @@ async function processGame(game, ctx) {
   const lines = [];
   const stats = { downloaded: 0, skipped: 0, failed: 0, bytes: 0, noHeroes: 0, notFound: 0 };
 
-  const existing = index.byAppid.get(game.appid) || [];
+  // A shortcut has to be resolved before anything else: its local appid matches
+  // nothing in the output folder, so a skip-existing check against it would
+  // re-download the same art on every run.
+  const target = game.shortcut ? await resolveShortcut(apiFetch, game, lines) : null;
+  if (game.shortcut && !target) {
+    stats.notFound = 1;
+    return { lines, stats };
+  }
+  const artAppid = target ? target.appid : game.appid;
+  const artName = target ? target.name : game.name;
+  const artLabel = label({ appid: artAppid, name: artName });
+
+  const existing = index.byAppid.get(artAppid) || [];
   if (options.skipExisting && existing.length >= options.limit) {
-    lines.push([`  ${label(game)} already has ${existing.length} file(s)`, "item"]);
+    lines.push([`  ${artLabel} already has ${existing.length} file(s)`, "item"]);
     stats.skipped += existing.length;
     return { lines, stats };
   }
 
-  const images = await findHeroes(apiFetch, game, options, lines);
+  const images = target
+    ? await fetchHeroes(apiFetch, target.endpoint, options)
+    : await findHeroes(apiFetch, game, options, lines);
   if (images === null) {
     stats.notFound = 1;
     return { lines, stats };
   }
   if (images.length === 0) {
-    lines.push([`  ${label(game)} no heroes on SteamGridDB`, "warn"]);
+    lines.push([`  ${artLabel} no heroes on SteamGridDB`, "warn"]);
     stats.noHeroes = 1;
     return { lines, stats };
   }
 
   const picked = rankHeroes(images, options.limit);
-  lines.push([`  ${label(game)} ${picked.length} hero(es), ${images.length} available`, "info"]);
+  lines.push([`  ${artLabel} ${picked.length} hero(es), ${images.length} available`, "info"]);
 
   for (let i = 0; i < picked.length; i++) {
     const image = picked[i];
     const rank = i + 1;
-    const nameFor = (ext) => heroFileName(game.name || game.appid, game.appid, rank, Number(image.width), Number(image.height), ext);
+    const nameFor = (ext) => heroFileName(artName || artAppid, artAppid, rank, Number(image.width), Number(image.height), ext);
     const votes = `+${Number(image.upvotes) || 0}/-${Number(image.downvotes) || 0}`;
     const guess = nameFor(EXT_BY_MIME[String(image.mime || "").toLowerCase()] || ".png");
 
@@ -1281,11 +1443,13 @@ async function run(options, hooks = {}) {
     const ids = csv(options.game);
     const bad = ids.filter((id) => !/^\d+$/.test(id));
     if (bad.length) throw new UserError(`Not a valid appid: ${bad.join(", ")}. Use numeric Steam appids, or "all".`);
-    const named = resolveLibraryGames(steamRoot, new Set(ids), (m) => log(m, "warn"));
+    // Shortcut names are pulled here too: an explicitly named shortcut appid is
+    // otherwise nameless, and the name is the only thing SteamGridDB can match.
+    const named = resolveLibraryGames(steamRoot, new Set(ids), discoverShortcuts(steamRoot, accounts), (m) => log(m, "warn"));
     games = ids.map((id) => named.get(id) || { appid: id, name: null, type: null });
     log(`Requested ${games.length} appid(s): ${games.map((g) => g.name || g.appid).join(", ")}`);
   } else {
-    const { appids, counts } = discoverLibrary(steamRoot, accounts);
+    const { appids, counts, shortcuts } = discoverLibrary(steamRoot, accounts);
     log(`Library: ${appids.size} appid(s)  (${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ")})`);
     if (appids.size === 0) {
       throw new UserError(
@@ -1293,7 +1457,7 @@ async function run(options, hooks = {}) {
         "or name the appids directly in the game field."
       );
     }
-    const all = resolveLibraryGames(steamRoot, appids, (m) => log(m, "warn"));
+    const all = resolveLibraryGames(steamRoot, appids, shortcuts, (m) => log(m, "warn"));
     const kept = [];
     const filtered = [];
     let unknownType = 0;
@@ -1307,6 +1471,9 @@ async function run(options, hooks = {}) {
     kept.sort((a, b) => (a.name || a.appid).localeCompare(b.name || b.appid));
     log(`  -> ${kept.length} game(s), ${filtered.length} filtered out by type, ${unknownType} with unknown type (kept)`,
       kept.length > 0 ? "info" : "warn");
+    if (shortcuts.size > 0) {
+      log(`  -> ${shortcuts.size} non-Steam shortcut(s) included; these are matched by name: ${[...shortcuts.values()].join(", ")}`);
+    }
     games = kept;
   }
 

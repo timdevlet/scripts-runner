@@ -1,44 +1,129 @@
 // Template parameters for JS scripts: {{name}} holes in the source become fields in the Scripts
 // tab, and params.name references are collected the same way. Pure — the renderer extracts fields
 // as the user types, and the runner rewrites the source before spawning node.
+//
+// A hole may declare a kind, which decides the control the Scripts tab renders for it:
+//
+//   {{outDir}}                            text input   (the plain, untyped form)
+//   {{outDir=/tmp/arts}}                  text input with a default
+//   {{apply:bool=false}}                  toggle switch
+//   {{outDir:dir=/tmp/arts}}              text input + Browse… (native directory picker)
+//   {{pick:one(first|random|largest)}}    dropdown, one choice
+//   {{styles:many(alternate|blurred)}}    checklist, any number of choices
+//
+// Values stay strings end to end — js-script.ts persists Record<string, string> and drops
+// anything else — so a bool is "true"/"false" and a multi-select is a comma-joined list. Scripts
+// read them as strings (`params.apply === "true"`), which is also what the untyped holes always
+// did, so adding a kind to an existing hole never changes what the script receives.
+
+export type ScriptParamKind = "text" | "bool" | "dir" | "one" | "many";
+
+const KINDS = new Set<string>(["text", "bool", "dir", "one", "many"]);
 
 export interface ScriptParam {
   // The identifier inside {{name}} / params.name — also the form field's label.
   name: string;
-  // From {{name=default}}. "" when the hole has no default (or came from a params.name reference).
+  // Which control to render. "text" for a bare {{name}} and for an unrecognized annotation — a
+  // typo degrades to the input that was always there rather than making the field vanish.
+  kind: ScriptParamKind;
+  // The choices for "one"/"many", in declaration order. Empty for every other kind.
+  options: string[];
+  // From {{name=default}}. "" when the hole has no default (or came from a params.name
+  // reference), except for bool, which normalizes to "false".
   defaultValue: string;
 }
 
-// {{dir}} or {{dir=/tmp}}. The default may be anything except a closing brace.
-const PLACEHOLDER_RE = /\{\{([A-Za-z_][A-Za-z0-9_]*)(?:=([^}]*))?\}\}/g;
+// {{dir}}, {{dir=/tmp}}, {{dir:kind}}, {{dir:kind(a|b)}}, {{dir:kind(a|b)=a}}.
+// The option list stops at the first ")" so the default after it is still its own group; the
+// default itself may be anything except a closing brace.
+const PLACEHOLDER_RE =
+  /\{\{([A-Za-z_][A-Za-z0-9_]*)(?::([A-Za-z]+)(?:\(([^)}]*)\))?)?(?:=([^}]*))?\}\}/g;
 const PARAMS_MEMBER_RE = /\bparams\.([A-Za-z_][A-Za-z0-9_]*)/g;
+
+// What a checked toggle writes, and what a script should compare against. The reader is lenient
+// because these values are also typed by hand into the source's `=default`.
+const TRUTHY = new Set(["true", "1", "yes", "on"]);
+
+export function isParamChecked(value: string): boolean {
+  return TRUTHY.has(value.trim().toLowerCase());
+}
+
+// A "many" value is a comma-joined list. Blank entries are dropped so "a,,b" and a trailing
+// comma both round-trip cleanly.
+export function parseManyValue(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+}
+
+export function formatManyValue(values: readonly string[]): string {
+  return values.join(",");
+}
 
 function cloneRe(re: RegExp): RegExp {
   return new RegExp(re.source, re.flags);
 }
 
-// Unique parameters, in the order they first appear. A later {{name=default}} fills in a default
-// that an earlier bare {{name}} didn't have; params.name never invents a default of its own.
+function parseKind(raw: string | undefined): ScriptParamKind {
+  const kind = (raw ?? "").toLowerCase();
+  return KINDS.has(kind) ? (kind as ScriptParamKind) : "text";
+}
+
+function parseOptions(raw: string | undefined): string[] {
+  if (raw === undefined) return [];
+  const seen = new Set<string>();
+  const options: string[] = [];
+  for (const entry of raw.split("|")) {
+    const option = entry.trim();
+    if (option === "" || seen.has(option)) continue;
+    seen.add(option);
+    options.push(option);
+  }
+  return options;
+}
+
+// A bool's stored value is always exactly "true" or "false", so the toggle has a definite state
+// and the value a script sees doesn't depend on how the default was spelled.
+function normalizeDefault(kind: ScriptParamKind, raw: string): string {
+  if (kind === "bool") return isParamChecked(raw) ? "true" : "false";
+  return raw;
+}
+
+// Unique parameters, in the order they first appear. Later occurrences fill in what an earlier
+// one left out — a default, a kind, an option list — so the annotation only has to be written
+// once even when the hole is repeated; params.name never invents any of them.
 export function extractScriptParams(source: string): ScriptParam[] {
   const seen = new Map<string, ScriptParam>();
   const order: string[] = [];
 
   for (const match of source.matchAll(cloneRe(PLACEHOLDER_RE))) {
     const name = match[1];
-    const defaultValue = match[2] ?? "";
+    const kind = parseKind(match[2]);
+    const options = parseOptions(match[3]);
+    const defaultValue = normalizeDefault(kind, match[4] ?? "");
     const existing = seen.get(name);
     if (!existing) {
-      seen.set(name, { name, defaultValue });
+      seen.set(name, { name, kind, options, defaultValue });
       order.push(name);
-    } else if (existing.defaultValue === "" && defaultValue !== "") {
-      existing.defaultValue = defaultValue;
+      continue;
+    }
+    if (existing.kind === "text" && kind !== "text") {
+      existing.kind = kind;
+      // The default was normalized against the kind we knew at the time; redo it now that the
+      // hole has declared one, so {{ok}} … {{ok:bool=yes}} still ends up as "true".
+      existing.defaultValue = normalizeDefault(kind, existing.defaultValue);
+    }
+    if (existing.options.length === 0 && options.length > 0) existing.options = options;
+    if (existing.defaultValue === "" && defaultValue !== "") {
+      existing.defaultValue = normalizeDefault(existing.kind, match[4] ?? "");
     }
   }
 
   for (const match of source.matchAll(cloneRe(PARAMS_MEMBER_RE))) {
     const name = match[1];
     if (seen.has(name)) continue;
-    seen.set(name, { name, defaultValue: "" });
+    seen.set(name, { name, kind: "text", options: [], defaultValue: "" });
     order.push(name);
   }
 
@@ -73,14 +158,20 @@ export function pruneParamValues(
   return pruned;
 }
 
-// A schedule only arms when every extracted param has a non-empty resolved value (stored or default).
+// A schedule only arms when every extracted param has a value. "Has a value" means non-empty for
+// the kinds a user types into — but an unchecked toggle ("false") and an empty checklist ("none
+// of them") are answers, not blanks, so those kinds never block a schedule.
 export function scriptParamsFilled(source: string, stored: Record<string, string>): boolean {
   const params = extractScriptParams(source);
   const values = resolveParamValues(params, stored);
-  return params.every((param) => values[param.name].trim() !== "");
+  return params.every((param) => {
+    if (param.kind === "bool" || param.kind === "many") return true;
+    return values[param.name].trim() !== "";
+  });
 }
 
-// Turn {{dir}} / {{dir=/tmp}} into params.dir so the prelude's object is the single source of values.
+// Turn {{dir}} / {{dir=/tmp}} / {{dir:one(a|b)=a}} into params.dir so the prelude's object is the
+// single source of values.
 export function rewriteScriptSource(source: string): string {
   return source.replace(cloneRe(PLACEHOLDER_RE), (_match, name: string) => `params.${name}`);
 }

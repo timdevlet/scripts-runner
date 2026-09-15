@@ -65,8 +65,10 @@ const IDENT_START = /[A-Za-z_$]/;
 const IDENT_PART = /[A-Za-z0-9_$]/;
 const DIGIT = /[0-9]/;
 
-// {{dir}} or {{dir=/tmp}} — same shape as domain/script-params.ts.
-const PARAM_RE = /^\{\{[A-Za-z_][A-Za-z0-9_]*(?:=[^}]*)?\}\}/;
+// {{dir}}, {{dir=/tmp}}, {{dir:one(a|b)=a}} — same shape as PLACEHOLDER_RE in
+// domain/script-params.ts, anchored. Keep the two in sync: a hole the extractor accepts but this
+// misses loses its highlight, and the reverse colours text the runner will never substitute.
+const PARAM_RE = /^\{\{[A-Za-z_][A-Za-z0-9_]*(?::[A-Za-z]+(?:\([^)}]*\))?)?(?:=[^}]*)?\}\}/;
 
 export function tokenizeJs(source: string): JsToken[] {
   const tokens: JsToken[] = [];

@@ -7,16 +7,18 @@ export function SwitchField({
   id,
   label,
   checked,
+  disabled = false,
   onChange,
 }: {
   id: string;
   label: ReactNode;
   checked: boolean;
+  disabled?: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
     <div className="field check">
-      <ToggleSwitch id={id} checked={checked} onChange={onChange} />
+      <ToggleSwitch id={id} checked={checked} disabled={disabled} onChange={onChange} />
       <label htmlFor={id}>{label}</label>
     </div>
   );

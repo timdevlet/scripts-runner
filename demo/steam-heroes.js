@@ -40,17 +40,20 @@ function choice(value, allowed, fallback) {
   return allowed.includes(v) ? v : fallback;
 }
 
-const action = String({{action=run}}).trim() || "run";
+// The :kind after a name picks the control the Scripts tab renders for the
+// field — a dropdown, a toggle, a folder picker. Each still hands this script a
+// plain string, so the parsing above is unchanged.
+const action = String({{action:one(run|list-backups|restore)=run}}).trim() || "run";
 const opts = {
-  apply: isTrue({{apply=false}}),
-  steam: unset({{steam}}),
+  apply: isTrue({{apply:bool=false}}),
+  steam: unset({{steam:dir}}),
   account: unset({{account}}),
-  allAccounts: isTrue({{allAccounts=false}}),
+  allAccounts: isTrue({{allAccounts:bool=false}}),
   game: unset({{game}}),
-  skipExisting: isTrue({{skipExisting=false}}),
-  coversDir: unset({{coversDir}}),
-  coversOnly: isTrue({{coversOnly=false}}),
-  pick: choice({{pick=first}}, ["first", "random"], "first"),
+  skipExisting: isTrue({{skipExisting:bool=false}}),
+  coversDir: unset({{coversDir:dir}}),
+  coversOnly: isTrue({{coversOnly:bool=false}}),
+  pick: choice({{pick:one(first|random)=first}}, ["first", "random"], "first"),
   restore: unset({{restore}}),
 };
 
@@ -268,9 +271,17 @@ function discoverBackgrounds(steamRoot, gridDir, gridIndex) {
   return sources;
 }
 
-// Scan a user-provided folder of wide backgrounds. A file matches a game when one
-// of the maximal digit groups in its name equals a known appid (so "portal2-1222140"
-// matches 1222140, not the stray "2"). Returns one chosen cover per appid, plus
+// Scan a user-provided folder of wide backgrounds. A file is matched to a game in
+// three steps, most reliable first:
+//
+//   1. the companion downloader's positional "[NAME] [APPID] [RANK] [WxH]" format,
+//      whose appid field is exact;
+//   2. for any other filename, the longest maximal digit group that is a known
+//      appid (so "portal2-1222140" matches 1222140, not the stray "2");
+//   3. the title, for a file whose appid names nothing here — which is the normal
+//      case for a non-Steam shortcut, whose local appid only Steam knows.
+//
+// Returns one chosen cover per appid, plus
 // enough accounting to explain every file that did NOT become a cover: images
 // matching no game, images passed over because another file won that appid, and
 // non-image files that were never candidates.
@@ -281,20 +292,50 @@ function discoverBackgrounds(steamRoot, gridDir, gridIndex) {
 // art. "random" draws one of them per run instead, so running again rotates the
 // art. The draw happens per account, so two accounts on one machine can land on
 // different images for the same game — each account has its own grid folder.
-function discoverFolderCovers(coversDir, known, pick = "first") {
+function discoverFolderCovers(coversDir, known, pick = "first", names = null) {
   const candidates = new Map(); // appid -> [name, ...], name-sorted
   const unmatched = [];
+  const matchedByTitle = new Map(); // appid -> the title that found it
+  const titles = titleIndex(names);
   let scanned = 0;
   let nonImages = 0;
   for (const entry of readdirOrThrow(coversDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isFile()) continue;
     if (!isImage(entry.name)) { nonImages++; continue; }
     scanned++;
-    const groups = (path.basename(entry.name, path.extname(entry.name)).match(/\d+/g) || [])
-      .filter((g) => known.has(g));
-    if (groups.length === 0) { unmatched.push(entry.name); continue; }
-    groups.sort((a, b) => b.length - a.length); // prefer the longest known appid
-    const appid = groups[0];
+    const base = path.basename(entry.name, path.extname(entry.name));
+    const tail = base.match(OUTPUT_TAIL_RE);
+    let appid = null;
+    if (tail) {
+      // The companion downloader's format is positional — "[NAME] [APPID] [RANK]
+      // [WIDTHxHEIGHT]" — so the appid is a known field, not something to guess
+      // at. Reading it from that position is also the only way to avoid picking
+      // digits out of the resolution: "205790 205790 1 1920x620.png" contains a
+      // "620", and 620 is Portal 2. Scavenging the other numbers when this appid
+      // is unknown is exactly how that file ends up as Portal 2's cover, so an
+      // unknown appid here falls through to the title instead.
+      if (known.has(tail[1])) appid = tail[1];
+    } else {
+      const groups = (base.match(/\d+/g) || []).filter((g) => known.has(g));
+      if (groups.length > 0) {
+        groups.sort((a, b) => b.length - a.length); // prefer the longest known appid
+        appid = groups[0];
+      }
+    }
+    if (!appid) {
+      // No number in the name is an appid this machine knows. For a non-Steam
+      // shortcut that is the expected case, not a failure: the downloader names
+      // files with the game's real Steam appid, while Steam files the shortcut's
+      // art under the id it invented locally. The title is the only thing the two
+      // have in common, so it is what gets matched — exactly, and only when it
+      // names a single game.
+      const found = titles.get(coverTitle(entry.name));
+      if (found) {
+        appid = found;
+        matchedByTitle.set(appid, coverTitle(entry.name));
+      }
+    }
+    if (!appid) { unmatched.push(entry.name); continue; }
     if (!candidates.has(appid)) candidates.set(appid, []);
     candidates.get(appid).push(entry.name);
   }
@@ -308,7 +349,36 @@ function discoverFolderCovers(coversDir, known, pick = "first") {
       if (name !== chosen) passedOver.push({ name, appid, kept: chosen });
     }
   }
-  return { covers, unmatched, passedOver, scanned, nonImages };
+  return { covers, unmatched, passedOver, scanned, nonImages, matchedByTitle };
+}
+
+// Case, punctuation and spacing dropped, so "Resonance: A Plague Tale Legacy"
+// and the sanitized "Resonance A Plague Tale Legacy" in a filename compare equal.
+const normalizeTitle = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+// The companion downloader writes "[NAME] [APPID] [RANK] [WIDTHxHEIGHT].[EXT]".
+// Stripping that fixed tail leaves the title; anything else falls back to the
+// whole stem, so a hand-named file still has something to match on.
+const OUTPUT_TAIL_RE = / (\d+) ([1-9]\d*) (\d+x\d+|unknown)$/;
+
+function coverTitle(fileName) {
+  const base = path.basename(fileName, path.extname(fileName));
+  const stripped = base.replace(OUTPUT_TAIL_RE, "");
+  return normalizeTitle(stripped || base);
+}
+
+// normalized title -> appid, for titles that name exactly one game. A title two
+// games share is left out rather than guessed at.
+function titleIndex(names) {
+  const seen = new Map();
+  for (const [appid, name] of names || []) {
+    const key = normalizeTitle(name);
+    if (!key) continue;
+    const hit = seen.get(key);
+    if (hit === undefined) seen.set(key, appid);
+    else if (hit !== appid) seen.set(key, null); // ambiguous
+  }
+  return seen;
 }
 
 // Every digit group appearing in a covers folder's filenames — used to widen the
@@ -320,6 +390,56 @@ function coversFolderAppidCandidates(coversDir) {
     for (const g of path.basename(entry.name, path.extname(entry.name)).match(/\d+/g) || []) out.add(g);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Non-Steam shortcuts
+// ---------------------------------------------------------------------------
+
+// Games the user added to Steam by hand. They live in a small binary VDF:
+//
+//   0x01 <key>\0 <value>\0  string
+//   0x02 <key>\0 <4 bytes>  int32, little-endian
+//
+// Only appid and AppName matter, and both can be read positionally. The appid is
+// stored signed but Steam names the shortcut\'s grid files with the UNSIGNED form
+// (3506241571.png, 3506241571_hero.png), which is what has to come back here —
+// it is the filename this script writes.
+//
+// These names are the only ones Steam has for a shortcut: it appears in no
+// appmanifest and in no appinfo.vdf.
+function readShortcuts(file) {
+  const found = new Map();
+  let buf;
+  try { buf = fs.readFileSync(file); } catch { return found; }
+  const APPID_KEY = Buffer.from("\x02appid\x00", "binary");
+  const NAME_KEY = Buffer.from("\x01AppName\x00", "binary");
+  let at = 0;
+  while (at < buf.length) {
+    const appidAt = buf.indexOf(APPID_KEY, at);
+    if (appidAt === -1) break;
+    const valueAt = appidAt + APPID_KEY.length;
+    if (valueAt + 4 > buf.length) break;
+    const appid = String(buf.readUInt32LE(valueAt));
+    const nameAt = buf.indexOf(NAME_KEY, valueAt + 4);
+    if (nameAt === -1) break;
+    const from = nameAt + NAME_KEY.length;
+    const end = buf.indexOf(0, from);
+    const name = buf.toString("utf8", from, end === -1 ? buf.length : end).trim();
+    if (name) found.set(appid, name);
+    at = end === -1 ? buf.length : end + 1;
+  }
+  return found;
+}
+
+function discoverShortcuts(steamRoot, accounts) {
+  const shortcuts = new Map();
+  for (const accountId of accounts) {
+    const file = path.join(steamRoot, "userdata", accountId, "config", "shortcuts.vdf");
+    if (!isFile(file)) continue;
+    for (const [appid, name] of readShortcuts(file)) shortcuts.set(appid, name);
+  }
+  return shortcuts;
 }
 
 // ---------------------------------------------------------------------------
@@ -533,12 +653,15 @@ function planAccount(steamRoot, accountId, opts, names) {
   let coversStats = null;
   if (opts.coversDir) {
     const known = new Set([...sources.keys(), ...(names ? names.keys() : [])]);
-    const { covers, unmatched, passedOver, scanned, nonImages } = discoverFolderCovers(opts.coversDir, known, opts.pick);
+    const { covers, unmatched, passedOver, scanned, nonImages, matchedByTitle } =
+      discoverFolderCovers(opts.coversDir, known, opts.pick, names);
     for (const [appid, c] of covers) {
       sources.set(appid, { file: c.file, kind: "folder-cover" });
     }
     unmatchedCovers = unmatched;
-    coversStats = { scanned, nonImages, passedOver, pick: opts.pick, matched: covers.size };
+    coversStats = {
+      scanned, nonImages, passedOver, pick: opts.pick, matched: covers.size, matchedByTitle,
+    };
   }
 
   let appids = [...sources.keys()].sort((a, b) => Number(a) - Number(b));
@@ -796,6 +919,14 @@ function formatPlanLines(plan) {
     if (cs.nonImages > 0) {
       lines.push([`    ${cs.nonImages} non-image file(s) ignored`, "info"]);
     }
+    // Worth calling out: these went to an appid that appears nowhere in the
+    // filename, so the mapping is not obvious from the name alone.
+    if (cs.matchedByTitle && cs.matchedByTitle.size > 0) {
+      lines.push([`    ${cs.matchedByTitle.size} matched by title, not by appid:`, "info"]);
+      for (const [appid, title] of cs.matchedByTitle) {
+        lines.push([`      ${appid}  ${title}`, "item"]);
+      }
+    }
     lines.push(...nameListLines("matched no game in your library:", plan.unmatchedCovers, "warn"));
     // Which file won an appid is a choice the user made with the pick field, so say
     // which rule was applied — otherwise a random run reads like a mysterious one.
@@ -916,6 +1047,14 @@ function run(opts, hooks = {}) {
     for (const g of coversFolderAppidCandidates(opts.coversDir)) wanted.add(g);
   }
   const names = resolveNames(steamRoot, wanted, (m) => log(m, "warn"));
+  // Non-Steam shortcuts last, and unconditionally: their name appears in no
+  // appmanifest and no appinfo.vdf, so shortcuts.vdf is the only source there is.
+  // Without these a covers file can never be matched to a shortcut by title.
+  const shortcuts = discoverShortcuts(steamRoot, accounts);
+  for (const [appid, name] of shortcuts) names.set(appid, name);
+  if (shortcuts.size > 0) {
+    log(`Non-Steam shortcuts: ${[...shortcuts.values()].join(", ")}`);
+  }
 
   const plans = [];
   const totals = { written: 0, heroWritten: 0, skipped: 0, backedUp: 0 };

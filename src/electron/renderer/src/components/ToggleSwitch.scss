@@ -16,6 +16,13 @@
     cursor: pointer;
   }
 
+  /* Matches the dimmed-and-inert look the buttons and menus use when a pane is read-only. */
+  &.disabled,
+  &.disabled input {
+    opacity: 0.6;
+    cursor: default;
+  }
+
   .track {
     position: absolute;
     inset: 0;

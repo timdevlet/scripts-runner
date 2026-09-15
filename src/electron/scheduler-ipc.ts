@@ -153,6 +153,28 @@ export async function installSchedulerIpc(
     };
   });
 
+  // Native directory picker behind the "dir" script params and the working-directory fields.
+  // Lives here with the other dialogs for the same reason: the renderer can't open one itself,
+  // and the window-optional call below is the tray-app detail that keeps it working when the
+  // window is closed. The current value only seeds defaultPath — the chosen path is the user's,
+  // so nothing the renderer sends can reach the filesystem on its own.
+  ipcMain.handle("dialog:pick-directory", async (_event, current: unknown) => {
+    const win = getWindow();
+    const options = {
+      title: "Choose a folder",
+      properties: ["openDirectory" as const, "createDirectory" as const],
+      ...(typeof current === "string" && current.trim() !== ""
+        ? { defaultPath: current.trim() }
+        : {}),
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    const dir = result.filePaths[0];
+    if (result.canceled || !dir) return { ok: false as const, cancelled: true as const };
+    return { ok: true as const, path: dir };
+  });
+
   ipcMain.handle("scheduler:export", async () => {
     const win = getWindow();
     const options = {
@@ -314,6 +336,7 @@ export async function installSchedulerIpc(
         "scripts:stop",
         "scripts:export",
         "scripts:import",
+        "dialog:pick-directory",
       ]) {
         ipcMain.removeHandler(channel);
       }

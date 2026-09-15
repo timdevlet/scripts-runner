@@ -5,19 +5,22 @@ export function ToggleSwitch({
   checked,
   onChange,
   id,
+  disabled = false,
   "aria-label": ariaLabel,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   id?: string;
+  disabled?: boolean;
   "aria-label"?: string;
 }) {
   return (
-    <span className="switch">
+    <span className={disabled ? "switch disabled" : "switch"}>
       <input
         id={id}
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         aria-label={ariaLabel}
         onChange={(e) => onChange(e.currentTarget.checked)}
       />

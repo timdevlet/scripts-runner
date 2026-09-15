@@ -37,6 +37,10 @@ export type JsScriptsImportResult =
   | { ok: true; scripts: JsScript[] }
   | { ok: false; cancelled?: true; error?: string };
 export type SettingsSaveResult = { ok: true } | { ok: false; error?: string };
+// The native folder chooser behind "dir" script params.
+export type DirectoryPickResult =
+  | { ok: true; path: string }
+  | { ok: false; cancelled?: true; error?: string };
 // A save in the external editor, and whether a script currently has an editor session open.
 export type JsScriptEditSource = { id: string; source: string };
 export type JsScriptEditState = { id: string; open: boolean };
@@ -62,8 +66,11 @@ const appAPI = {
   clearHistory: (): void => ipcRenderer.send("log:clear"),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke("app:version"),
   // Auto-update against the GitHub releases (see src/electron/update-check.ts). The check
-  // returns the current update state (null while up to date).
-  checkForUpdate: (): Promise<UpdateCheckResult> => ipcRenderer.invoke("update:check"),
+  // returns the current update state (null while up to date). `force` skips the main process's
+  // ten-minute cache — pass it for a check the user asked for by clicking, not for background
+  // or mount-time pulls.
+  checkForUpdate: (force = false): Promise<UpdateCheckResult> =>
+    ipcRenderer.invoke("update:check", force),
   // Install mode: downloads the update, resolving when it lands (progress arrives via
   // onUpdateState meanwhile). Browser mode: opens the download in the browser. What (and
   // whether) to download is the main process's last check — deliberately not a renderer
@@ -112,6 +119,10 @@ const appAPI = {
     ipcRenderer.invoke("scripts:edit", scriptId),
   onJsScriptEditSource: subscribe<JsScriptEditSource>("scripts:edit-source"),
   onJsScriptEditState: subscribe<JsScriptEditState>("scripts:edit-state"),
+  // Native folder chooser for {{name:dir}} params. `current` only seeds the dialog's starting
+  // folder; what comes back is whatever the user actually picked.
+  pickDirectory: (current?: string): Promise<DirectoryPickResult> =>
+    ipcRenderer.invoke("dialog:pick-directory", current ?? ""),
 };
 
 export type AppAPI = typeof appAPI;

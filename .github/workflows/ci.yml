@@ -68,7 +68,15 @@ jobs:
             # Macs would otherwise get nothing. No .dmg; macOS updates open in the browser.
             dist: npm run dist:portable:mac -- --publish never
             artifact: macos-build
-            path: release/*.zip
+            # latest-mac.yml + the .zip.blockmap are electron-updater's macOS metadata. macOS
+            # updates open in the browser today (the builds are unsigned, and Squirrel.Mac
+            # validates the signature), but the metadata costs nothing to publish and is the one
+            # missing piece the day these builds get signed — leaving it out is how a future
+            # macOS self-update silently fails instead of working.
+            path: |
+              release/*.zip
+              release/*.blockmap
+              release/latest-mac.yml
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -108,7 +116,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          mapfile -t files < <(find dist -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.blockmap' -o -name 'latest.yml' \) | sort)
+          mapfile -t files < <(find dist -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.blockmap' -o -name 'latest*.yml' \) | sort)
           echo "Found ${#files[@]} release files:"
           printf '  %s\n' "${files[@]}"
           if [ "${#files[@]}" -eq 0 ]; then

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isNewerVersion, pickUpdateFromRelease } from "../src/domain/update.js";
+import {
+  isNewerVersion,
+  pickUpdateFromRelease,
+  pickUpdateFromReleases,
+} from "../src/domain/update.js";
 
 // Asset names as electron-builder actually produces them for this app: an NSIS installer, a
 // portable .exe, and one zipped .app per macOS architecture. Deliberately space-free — spaces
@@ -148,5 +152,52 @@ describe("pickUpdateFromRelease", () => {
         "x64",
       ),
     ).toEqual({ version: "0.2.0", tag: "0.2.0", url: "u" });
+  });
+});
+
+// The /releases list is what the app actually calls now. Its shape is the same objects, plus the
+// rolling "latest" prerelease CI republishes on every push to main — the release that made
+// /releases/latest answer 404 and wedged the update check.
+describe("pickUpdateFromReleases", () => {
+  const rolling = release({
+    tag_name: "latest",
+    prerelease: true,
+    html_url: "https://github.com/timdevlet/scripts-runner/releases/tag/latest",
+  });
+
+  it("finds the versioned release past the rolling 'latest' prerelease", () => {
+    const found = pickUpdateFromReleases([rolling, release()], "0.1.4", "win32");
+    expect(found).toEqual({
+      version: "0.2.0",
+      tag: "0.2.0",
+      url: `${DOWNLOAD}/setup.exe`,
+    });
+  });
+
+  it("returns null when the only release is the rolling prerelease", () => {
+    expect(pickUpdateFromReleases([rolling], "0.1.4", "win32")).toBeNull();
+  });
+
+  it("picks the highest version, not GitHub's newest-first position", () => {
+    const older = release({ tag_name: "0.3.0" });
+    const newer = release({ tag_name: "0.10.0" });
+    // Newest-created first, as GitHub returns them: a 0.3.0 patch cut after 0.10.0 leads.
+    expect(pickUpdateFromReleases([older, newer], "0.1.4", "win32")?.version).toBe("0.10.0");
+  });
+
+  it("skips drafts, whose assets aren't publicly downloadable", () => {
+    const draft = release({ tag_name: "0.9.0", draft: true });
+    expect(pickUpdateFromReleases([draft, release()], "0.1.4", "win32")?.version).toBe("0.2.0");
+  });
+
+  it("returns null for an empty list or a non-array body", () => {
+    expect(pickUpdateFromReleases([], "0.1.4", "win32")).toBeNull();
+    expect(pickUpdateFromReleases({ message: "Not Found" }, "0.1.4", "win32")).toBeNull();
+    expect(pickUpdateFromReleases(null, "0.1.4", "win32")).toBeNull();
+  });
+
+  it("ignores releases that are not newer than the running version", () => {
+    expect(pickUpdateFromReleases([release()], "0.2.0", "win32")).toBeNull();
+    expect(pickUpdateFromReleases([release()], "1.0.0", "win32")).toBeNull();
   });
 });

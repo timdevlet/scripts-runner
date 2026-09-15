@@ -8,6 +8,7 @@ import type { AppAPI } from "../../../preload.js";
 export type {
   AppAPI,
   CronPreview,
+  DirectoryPickResult,
   JsScriptEditSource,
   JsScriptEditState,
   JsScriptsImportResult,
@@ -25,7 +26,7 @@ export const api: AppAPI = {
   getHistory: () => window.appAPI.getHistory(),
   clearHistory: () => window.appAPI.clearHistory(),
   getAppVersion: () => window.appAPI.getAppVersion(),
-  checkForUpdate: () => window.appAPI.checkForUpdate(),
+  checkForUpdate: (force) => window.appAPI.checkForUpdate(force),
   downloadUpdate: () => window.appAPI.downloadUpdate(),
   installUpdate: () => window.appAPI.installUpdate(),
   onUpdateState: (cb) => window.appAPI.onUpdateState(cb),
@@ -51,4 +52,5 @@ export const api: AppAPI = {
   editJsScript: (scriptId) => window.appAPI.editJsScript(scriptId),
   onJsScriptEditSource: (cb) => window.appAPI.onJsScriptEditSource(cb),
   onJsScriptEditState: (cb) => window.appAPI.onJsScriptEditState(cb),
+  pickDirectory: (current) => window.appAPI.pickDirectory(current),
 };

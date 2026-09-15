@@ -1,0 +1,23 @@
+/* Path field + Browse… on one row. The input keeps the field's full-width look and the button
+   sizes to its label. */
+.dir-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  button {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    svg {
+      color: var(--muted);
+    }
+  }
+}

@@ -126,6 +126,12 @@ function push() {
   // otherwise leave the release referring to nothing on GitHub.
   run(`git push origin ${branch}`);
   run(`git push origin ${newest.name}`);
+  // Confirm the tag actually landed. A push that fails quietly (no upstream, rejected ref, wrong
+  // remote) leaves the tag local-only, CI never builds a versioned release, and the in-app update
+  // check finds nothing forever — which is exactly how 0.1.3 and 0.1.4 went missing.
+  if (!capture(`git ls-remote --tags origin refs/tags/${newest.name}`)) {
+    fail(`tag ${newest.name} is not on origin after the push — the release build will not run`);
+  }
   console.log(`release: pushed ${branch} and tag ${newest.name}.`);
 }
 

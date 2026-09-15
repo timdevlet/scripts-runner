@@ -111,3 +111,32 @@ export function pickUpdateFromRelease(
   const url = installer?.url || (typeof rel.html_url === "string" ? rel.html_url : "");
   return url ? { version, tag, url } : null;
 }
+
+// Pick the newest update out of a GitHub /releases *list* response.
+//
+// Why the list and not /releases/latest: that endpoint 404s until a non-prerelease release
+// exists, and this project's CI publishes a rolling "latest" prerelease on every push to main.
+// A repo can therefore sit at "404 forever" while releases plainly exist — which is exactly the
+// state the in-app check was stuck in. The list endpoint answers [] instead of 404, and it
+// includes prereleases, so the rolling "latest" is skipped here on the merits (its tag isn't a
+// semver version) rather than by the endpoint's own definition.
+//
+// Drafts are skipped: their assets aren't publicly downloadable, so offering one is a dead link.
+export function pickUpdateFromReleases(
+  releases: unknown,
+  currentVersion: string,
+  platform: string,
+  arch: string = process.arch,
+): UpdateInfo | null {
+  if (!Array.isArray(releases)) return null;
+  let best: UpdateInfo | null = null;
+  for (const entry of releases) {
+    const rel = (typeof entry === "object" && entry !== null ? entry : {}) as { draft?: unknown };
+    if (rel.draft === true) continue;
+    const found = pickUpdateFromRelease(entry, currentVersion, platform, arch);
+    // GitHub returns newest-first, but that's creation order, not version order — a patch on an
+    // old branch would win. Compare versions instead of trusting the position.
+    if (found && (!best || isNewerVersion(found.version, best.version))) best = found;
+  }
+  return best;
+}

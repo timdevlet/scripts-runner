@@ -32,6 +32,18 @@ describe("tokenizeJs", () => {
     expect(joined(tokens)).toBe("fs.readdirSync({{dir=/var}})");
   });
 
+  it("colors the annotated forms too, so the highlight matches what the extractor accepts", () => {
+    const source = "go({{on:bool=true}}, {{pick:one(a|b)=a}}, {{d:dir=/tmp}}, {{s:many(x|y)}})";
+    const tokens = tokenizeJs(source);
+    expect(ofKind(tokens, "param")).toEqual([
+      "{{on:bool=true}}",
+      "{{pick:one(a|b)=a}}",
+      "{{d:dir=/tmp}}",
+      "{{s:many(x|y)}}",
+    ]);
+    expect(joined(tokens)).toBe(source);
+  });
+
   it("colors params as a keyword", () => {
     expect(ofKind(tokenizeJs("params.dir"), "keyword")).toEqual(["params"]);
   });

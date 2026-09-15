@@ -261,7 +261,10 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                   <>
                     Local JavaScript, run with <code>node</code>. Holes like{" "}
                     <code>{"{{dir}}"}</code> become fields below; they are JS expressions, so use{" "}
-                    <code>params.dir</code> inside strings.
+                    <code>params.dir</code> inside strings. Name a kind to get a control instead of
+                    a text box: <code>{"{{on:bool}}"}</code>, <code>{"{{out:dir}}"}</code>,{" "}
+                    <code>{"{{pick:one(a|b)}}"}</code>, <code>{"{{tags:many(a|b)}}"}</code> — every
+                    value still arrives as a string.
                   </>
                 )}
               </p>

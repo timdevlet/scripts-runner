@@ -218,3 +218,32 @@ export function ChevronDownIcon({ size = 16, className }: { size?: number; class
     </svg>
   );
 }
+
+// Folder — the Browse… button on a {{name:dir}} param field.
+export function FolderIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M1.75 4.25a1 1 0 0 1 1-1h3.1a1 1 0 0 1 .77.36l.76.93h5.87a1 1 0 0 1 1 1v6.2a1 1 0 0 1-1 1h-10.5a1 1 0 0 1-1-1z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// Tick — a selected row in the multi-select checklist (CheckboxMenu).
+export function CheckIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M3.5 8.5L6.5 11.5L12.5 4.5"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
