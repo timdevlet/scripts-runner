@@ -1,6 +1,6 @@
 {
   "name": "command-scheduler",
-  "version": "0.1.9",
+  "version": "0.1.8",
   "description": "Electron tray app that runs shell commands on a cron schedule.",
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -78,7 +78,17 @@
     ],
     "artifactName": "${name}-${version}-${arch}.${ext}",
     "nsis": {
-      "artifactName": "${name}-Setup-${version}-${arch}.${ext}"
+      "artifactName": "${name}-Setup-${version}-${arch}.${ext}",
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "runAfterFinish": true,
+      "installerHeaderIcon": "build/icon.ico",
+      "shortcutName": "Command Scheduler",
+      "uninstallDisplayName": "Command Scheduler",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
     }
   }
 }

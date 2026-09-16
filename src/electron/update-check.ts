@@ -1,6 +1,6 @@
 // Auto-update against GitHub releases. Detection is ours (the GitHub API + src/domain/update.ts,
-// which knows to skip the rolling "latest" prerelease); applying the update depends on how the
-// app was installed:
+// which reads the rolling "latest" prerelease's version off its asset names, since its tag names
+// no version); applying the update depends on how the app was installed:
 //
 //  - Windows, installed from the NSIS setup ("install" mode): electron-updater downloads the new
 //    installer (verified against the release's latest.yml sha512) and quitAndInstall() restarts
@@ -24,9 +24,9 @@ const REPO = "timdevlet/scripts-runner";
 // The release *list*, not /releases/latest. /releases/latest 404s until a non-prerelease release
 // exists, and CI publishes a rolling "latest" prerelease on every push to main — so that endpoint
 // answered 404 forever while releases plainly existed, and the old code read that 404 as "no
-// update". The list endpoint answers [] instead, and domain/update.ts filters out the rolling
-// prerelease on the merits (its tag isn't a semver version). One page is plenty: 30 releases back
-// is far past anything newer than what's running.
+// update". The list endpoint answers [] instead, and it includes prereleases — which is what the
+// rolling release is, and today the only release this repo has. One page is plenty: 30 releases
+// back is far past anything newer than what's running.
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=30`;
 
 // A tray app runs for weeks — re-check periodically so the button eventually appears without a

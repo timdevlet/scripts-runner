@@ -1,3 +1,5 @@
+<img src="build/icon.png" alt="" width="96" align="right" />
+
 # Command Scheduler
 
 An Electron tray app that runs shell commands on a cron schedule. Extracted from the Commands tab in [samsung-tv-control](https://github.com/timdevlet/samsung-tv-control).

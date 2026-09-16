@@ -50,7 +50,8 @@ describe("isNewerVersion", () => {
   });
 
   it("never treats an unparseable tag as newer", () => {
-    // The rolling prerelease from main is tagged "latest" — it must not offer itself as an update.
+    // A version has to be a version. The rolling prerelease is tagged "latest", so its version
+    // comes from its asset names instead — never from the tag.
     expect(isNewerVersion("latest", "0.1.2")).toBe(false);
     expect(isNewerVersion("0.2", "0.1.2")).toBe(false);
     expect(isNewerVersion("", "0.1.2")).toBe(false);
@@ -118,8 +119,59 @@ describe("pickUpdateFromRelease", () => {
     expect(pickUpdateFromRelease(release(), "9.0.0", "win32", "x64")).toBeNull();
   });
 
-  it("returns null for the rolling latest prerelease", () => {
-    expect(pickUpdateFromRelease(release({ tag_name: "latest" }), "0.1.2", "win32", "x64")).toBe(
+  it("reads the rolling prerelease's version off its asset names", () => {
+    // The "latest" tag says nothing about what's inside, but electron-builder stamps the version
+    // into every asset. Without this the app sits on "up to date" while a newer build is right
+    // there — the repo publishes no versioned releases at all today.
+    expect(pickUpdateFromRelease(release({ tag_name: "latest" }), "0.1.2", "win32", "x64")).toEqual(
+      {
+        version: "0.2.0",
+        tag: "latest",
+        url: `${DOWNLOAD}/setup.exe`,
+      },
+    );
+  });
+
+  it("reads the version from assets that don't fit this platform", () => {
+    // A Linux client sees no .appimage in these releases; it should still learn the version and
+    // be handed the release page rather than give up.
+    expect(pickUpdateFromRelease(release({ tag_name: "latest" }), "0.1.2", "linux", "x64")).toEqual(
+      {
+        version: "0.2.0",
+        tag: "latest",
+        url: "https://github.com/timdevlet/scripts-runner/releases/tag/0.2.0",
+      },
+    );
+  });
+
+  it("takes the highest version when assets disagree", () => {
+    // A leftover asset from an older build must not drag the release backwards.
+    const mixed = release({
+      tag_name: "latest",
+      assets: [
+        {
+          name: "command-scheduler-Setup-0.1.1-x64.exe",
+          browser_download_url: `${DOWNLOAD}/old-setup.exe`,
+        },
+        {
+          name: "command-scheduler-Setup-0.2.0-x64.exe",
+          browser_download_url: `${DOWNLOAD}/setup.exe`,
+        },
+      ],
+    });
+    expect(pickUpdateFromRelease(mixed, "0.1.2", "win32", "x64")?.version).toBe("0.2.0");
+  });
+
+  it("returns null for an unversioned tag whose assets carry no version either", () => {
+    const nameless = release({
+      tag_name: "latest",
+      assets: [{ name: "latest.yml", browser_download_url: `${DOWNLOAD}/latest.yml` }],
+    });
+    expect(pickUpdateFromRelease(nameless, "0.1.2", "win32", "x64")).toBeNull();
+  });
+
+  it("does not offer the rolling prerelease when it is not newer", () => {
+    expect(pickUpdateFromRelease(release({ tag_name: "latest" }), "0.2.0", "win32", "x64")).toBe(
       null,
     );
   });
@@ -174,8 +226,21 @@ describe("pickUpdateFromReleases", () => {
     });
   });
 
-  it("returns null when the only release is the rolling prerelease", () => {
-    expect(pickUpdateFromReleases([rolling], "0.1.4", "win32")).toBeNull();
+  it("offers the rolling prerelease when it is the only release", () => {
+    // The repo's actual state: one "latest" prerelease holding the newest build, no versioned
+    // releases. Answering "up to date" here is the bug that hid every build after 0.1.2.
+    expect(pickUpdateFromReleases([rolling], "0.1.4", "win32")).toEqual({
+      version: "0.2.0",
+      tag: "latest",
+      url: `${DOWNLOAD}/setup.exe`,
+    });
+  });
+
+  it("prefers the tagged release over the rolling one at the same version", () => {
+    // Both are cut from the same commit, but "latest" is deleted and recreated on every push to
+    // main — its download URLs are the ones that rot.
+    expect(pickUpdateFromReleases([rolling, release()], "0.1.4", "win32")?.tag).toBe("0.2.0");
+    expect(pickUpdateFromReleases([release(), rolling], "0.1.4", "win32")?.tag).toBe("0.2.0");
   });
 
   it("picks the highest version, not GitHub's newest-first position", () => {
