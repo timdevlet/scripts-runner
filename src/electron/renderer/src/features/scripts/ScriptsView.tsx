@@ -7,7 +7,10 @@ import { Column, Columns } from "../../components/Columns";
 import { ConfirmPopover } from "../../components/ConfirmPopover";
 import { ErrorText } from "../../components/ErrorText";
 import { Field } from "../../components/Field";
+import { IconButton } from "../../components/IconButton";
 import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CodeIcon,
   ExportIcon,
   ImportIcon,
@@ -16,6 +19,7 @@ import {
   StopIcon,
   TrashIcon,
 } from "../../components/icons";
+import { RailNav } from "../../components/RailNav";
 import { SwitchField } from "../../components/SwitchField";
 import { TextInput } from "../../components/TextInput";
 import { useScripts } from "../../hooks/useScripts";
@@ -35,6 +39,10 @@ function blankScript(): JsScript {
 }
 
 let logsColumnOpen = false;
+// Whether the script list is zipped shut to its rail. Module scope for the same reason as the logs
+// toggle above: the view remounts on every visit to the tab, and re-collapsing it each time would
+// undo a choice the user made about how much room the editor gets.
+let listColumnCollapsed = false;
 
 // The Scripts tab: user-defined JS templates with {{param}} holes extracted to fields, each with
 // an optional cron schedule and its own run log. Layout matches Commands (list / editor / runs).
@@ -44,6 +52,17 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(logsColumnOpen);
+  const [listCollapsed, setListCollapsed] = useState(listColumnCollapsed);
+
+  const toggleLogs = () => {
+    logsColumnOpen = !showLogs;
+    setShowLogs(logsColumnOpen);
+  };
+
+  const setCollapsed = (next: boolean) => {
+    listColumnCollapsed = next;
+    setListCollapsed(next);
+  };
 
   useEffect(() => {
     if (scripts.length === 0) {
@@ -127,11 +146,59 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
 
   return (
     <div className="modal commands-view">
-      <Columns className={showLogs ? "sched-columns with-logs" : "sched-columns"}>
+      <Columns
+        className={`sched-columns${showLogs ? " with-logs" : ""}${
+          listCollapsed ? " list-collapsed" : ""
+        }`}
+      >
         <Column
           title="Scripts"
           className="sched-list-column"
           resize={{ cssVar: "--col-list", min: 150, max: 400 }}
+          collapsed={listCollapsed}
+          // Zip it shut, for when the script being edited wants the width more than the list does.
+          titleAction={
+            <IconButton
+              className="column-title-action"
+              aria-label="Hide the script list"
+              title="Hide the script list"
+              onClick={() => setCollapsed(true)}
+            >
+              <ChevronLeftIcon />
+            </IconButton>
+          }
+          // What's left of the pane once it's collapsed: the way back to the list, the list itself
+          // as one-letter circles (switching scripts is the thing you'd otherwise have to open the
+          // pane for), and the runs toggle that otherwise lives in the footer.
+          rail={
+            <>
+              <IconButton
+                aria-label="Show the script list"
+                title="Show the script list"
+                onClick={() => setCollapsed(false)}
+              >
+                <ChevronRightIcon />
+              </IconButton>
+              <RailNav
+                ariaLabel="Script to configure"
+                items={scripts.map((s) => ({
+                  id: s.id,
+                  label: scriptLabel(s),
+                  running: snapshot.running.includes(s.id),
+                }))}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+              />
+              <IconButton
+                aria-label={showLogs ? "Hide the runs column" : "Show the runs column"}
+                title={showLogs ? "Hide runs" : "Show runs"}
+                aria-pressed={showLogs}
+                onClick={toggleLogs}
+              >
+                <LogsIcon />
+              </IconButton>
+            </>
+          }
           footer={
             <>
               <div className="sched-transfer">
@@ -150,14 +217,7 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                   <ImportIcon /> Import
                 </Button>
               </div>
-              <Button
-                className="sched-logs-toggle"
-                aria-pressed={showLogs}
-                onClick={() => {
-                  logsColumnOpen = !showLogs;
-                  setShowLogs(logsColumnOpen);
-                }}
-              >
+              <Button className="sched-logs-toggle" aria-pressed={showLogs} onClick={toggleLogs}>
                 <LogsIcon /> {showLogs ? "Hide logs" : "Logs"}
               </Button>
             </>

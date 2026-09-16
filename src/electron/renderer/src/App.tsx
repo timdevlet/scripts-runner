@@ -18,8 +18,8 @@ import type { AppSettings } from "./types";
 type View = "commands" | "scripts" | "settings" | "logs";
 
 const TABS: readonly { value: View; label: string }[] = [
-  { value: "commands", label: "Commands" },
   { value: "scripts", label: "Scripts" },
+  { value: "commands", label: "Commands" },
   { value: "settings", label: "Settings" },
   { value: "logs", label: "Logs" },
 ];
@@ -27,7 +27,7 @@ const TABS: readonly { value: View; label: string }[] = [
 export default function App() {
   const logs = useLogs();
   const toasts = useToasts();
-  const [view, setView] = useState<View>("commands");
+  const [view, setView] = useState<View>("scripts");
   const [autoScroll, setAutoScroll] = useState(true);
   const [settings, setSettings] = useState<AppSettings | null>(null);
 

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MutedMessage } from "../../components/MutedMessage";
 import { ScrollArea } from "../../components/ScrollArea";
+import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { formatClock, formatDuration, formatWhen } from "../../lib/datetime";
 import { api } from "../../stores/api";
 import type { RunLine, RunRecord, RunStatus } from "../../types";
@@ -52,28 +53,66 @@ export function RunHistory({ runs }: { runs: RunRecord[] }) {
   // A pinned run can be trimmed out of the history; fall back to the newest rather than showing
   // nothing.
   const selected = runs.find((r) => r.id === pinnedId) ?? runs[0];
+  const selectedId = selected?.id;
+  const newestId = runs[0]?.id;
+
+  // A run that starts while an older one is pinned unpins it: pressing ▶ and then watching the
+  // run you were reading sit there, frozen at its old output, reads as "the log doesn't update".
+  // Clicking a chip pins again.
+  const followedId = useRef(newestId);
+  useEffect(() => {
+    if (newestId !== followedId.current) {
+      followedId.current = newestId;
+      setPinnedId(null);
+    }
+  }, [newestId]);
+
+  // The fetches below are deliberately NOT torn down when the effect re-runs. A live run pushes a
+  // fresh snapshot several times a second, and cancelling the in-flight request on each one meant
+  // that whenever a response took longer than the gap between snapshots — exactly what happens
+  // when the main process is busy pumping a chatty run's output — every response was discarded and
+  // nothing appeared until the run ended and the updates stopped. Instead each request carries a
+  // sequence number: a response paints unless a newer one has already landed, or the selection has
+  // moved on since.
+  const requested = useRef(0);
+  const applied = useRef(0);
+  const showing = useRef<string | undefined>(undefined);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
-    if (!selected) {
+    if (selectedId == null) {
+      showing.current = undefined;
       setLines([]);
       return;
     }
-    let alive = true;
-    api.getRunOutput(selected.id).then(
-      (next) => {
-        if (alive) setLines(next);
-      },
-      () => {
-        if (alive) setLines([]);
-      },
-    );
-    return () => {
-      alive = false;
+    // A different run: clear first, so the previous run's output isn't left on screen under the
+    // new run's heading while its first fetch is out.
+    if (showing.current !== selectedId) {
+      showing.current = selectedId;
+      applied.current = 0;
+      setLines([]);
+    }
+    const seq = ++requested.current;
+    const apply = (next: RunLine[]) => {
+      if (!mounted.current || showing.current !== selectedId || seq <= applied.current) return;
+      applied.current = seq;
+      setLines(next);
     };
+    api.getRunOutput(selectedId).then(apply, () => apply([]));
     // Re-fetch as the run grows or ends. totalLines counts every line the run has ever emitted, so
     // it keeps ticking past the retention cap — a retained-line count would plateau there and the
     // tail of a chatty command would stop updating while it was still running.
-  }, [selected?.id, selected?.totalLines, selected?.status]);
+  }, [selectedId, selected?.totalLines, selected?.status]);
+
+  // Tail the output the way the Logs tab does: stick to the bottom while the user is already
+  // there, and stay put the moment they scroll up to read something.
+  const scroll = useAutoScroll(lines.length, true);
 
   if (runs.length === 0) {
     return <MutedMessage>No runs yet — press ▶ to run this command now.</MutedMessage>;
@@ -119,7 +158,14 @@ export function RunHistory({ runs }: { runs: RunRecord[] }) {
         </div>
       )}
 
-      <ScrollArea className="run-output">
+      <ScrollArea
+        className="run-output"
+        events={{
+          initialized: (inst) => scroll.attach(inst.elements().viewport),
+          destroyed: () => scroll.detach(),
+          scroll: () => scroll.onScroll(),
+        }}
+      >
         {selected?.truncated && (
           <div className="run-output-note">
             Older output was dropped — showing the most recent lines.

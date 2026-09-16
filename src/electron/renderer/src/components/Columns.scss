@@ -33,16 +33,63 @@
 
 .column-title {
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
   padding: 7px 12px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
   border-bottom: 1px solid var(--border);
-  /* A long title (a command's name) shortens rather than wrapping the bar to two lines. */
+}
+
+/* A long title (a command's name) shortens rather than wrapping the bar to two lines. */
+.column-title-text {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A title bar carrying a control (the collapse button) gives up its right padding to it and holds
+   the height the bare bar has, so panes with and without one still line up. */
+.column-title:has(.column-title-action) {
+  padding: 4px 5px 4px 12px;
+  min-height: 30px;
+}
+
+/* Bare in the title bar — no border or fill until hovered, like the app header's icon buttons. */
+.column-title-action.icon-button {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+
+  &:hover { background: var(--btn-hover); }
+}
+
+/* The collapsed pane: a rail of icon buttons down the left edge, wide enough for one and nothing
+   else. It keeps the pane's card treatment so the layout still reads as three panes, one zipped
+   shut. The grid track it sits in is the caller's to narrow — see CommandsView.scss. */
+.column-rail {
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0;
+
+  .icon-button {
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: transparent;
+
+    &:hover { background: var(--btn-hover); }
+    &[aria-pressed="true"] {
+      color: var(--accent);
+      background: var(--btn-hover);
+    }
+  }
 }
 
 .column-body {

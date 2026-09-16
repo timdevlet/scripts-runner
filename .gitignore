@@ -6,3 +6,4 @@ release/
 scheduled-commands.json
 settings.json
 .DS_Store
+js-scripts.json

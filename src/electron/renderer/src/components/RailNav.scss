@@ -1,0 +1,71 @@
+/* The collapsed pane's list: a column of round, one-letter buttons (see RailNav.tsx). Sized to
+   the rail's ~38px of content width, so a circle and nothing else. */
+.rail-scroll {
+  /* Takes the rail's spare height, so what follows it stays at the bottom. min-height lets it
+     scroll rather than stretching the rail past the pane. */
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Hairlines only once there are rows to separate — an empty rail would otherwise draw two
+   borders a few pixels apart. */
+.rail-scroll:has(.rail-dot) {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+/* One row. The letter is an identifier, not a label — deliberately not truncated text, which at
+   this width would be one character plus an ellipsis. */
+.rail-dot {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--btn-bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--btn-hover);
+    color: var(--text);
+  }
+
+  /* The selected row, matching the accent the open list uses for the same thing. */
+  &[aria-checked="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  /* Running: a dot on the rim, since the circle's own fill is already saying whether it's
+     selected. Bordered in the pane's background so it reads as sitting on top of the circle. */
+  &.running::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    bottom: -1px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    border: 1.5px solid var(--panel);
+  }
+}

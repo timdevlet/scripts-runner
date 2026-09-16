@@ -219,6 +219,36 @@ export function ChevronDownIcon({ size = 16, className }: { size?: number; class
   );
 }
 
+// Sideways chevrons, for collapsing a pane into its rail and opening it again. Same path as the
+// dropdown chevron, rotated — a collapse control reads as "this way" more than as an arrow.
+export function ChevronLeftIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M15 6l-6 6 6 6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function ChevronRightIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M9 6l6 6-6 6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 // Folder — the Browse… button on a {{name:dir}} param field.
 export function FolderIcon() {
   return (

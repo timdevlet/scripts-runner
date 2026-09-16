@@ -5,7 +5,10 @@ import { Column, Columns } from "../../components/Columns";
 import { ConfirmPopover } from "../../components/ConfirmPopover";
 import { ErrorText } from "../../components/ErrorText";
 import { Field } from "../../components/Field";
+import { IconButton } from "../../components/IconButton";
 import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
   ExportIcon,
   ImportIcon,
   LogsIcon,
@@ -13,6 +16,7 @@ import {
   StopIcon,
   TrashIcon,
 } from "../../components/icons";
+import { RailNav } from "../../components/RailNav";
 import { SwitchField } from "../../components/SwitchField";
 import { TextArea } from "../../components/TextArea";
 import { TextInput } from "../../components/TextInput";
@@ -34,6 +38,8 @@ function blankCommand(): ScheduledCommand {
 // visit to the tab, and having the column close itself each time would be a nuisance. Off to start
 // with, so the two working columns stay roomy in a narrow window.
 let logsColumnOpen = false;
+// Whether the command list is zipped shut to its rail — kept at module scope for the same reason.
+let listColumnCollapsed = false;
 
 // The Commands tab (shown only when the `enableScheduler` feature flag is on): user-defined shell
 // commands, each with an optional cron schedule and its own run log.
@@ -52,6 +58,17 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
   // Ids with an in-flight ▶ / ■ press, so the button can't be double-fired while the IPC is out.
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(logsColumnOpen);
+  const [listCollapsed, setListCollapsed] = useState(listColumnCollapsed);
+
+  const toggleLogs = () => {
+    logsColumnOpen = !showLogs;
+    setShowLogs(logsColumnOpen);
+  };
+
+  const setCollapsed = (next: boolean) => {
+    listColumnCollapsed = next;
+    setListCollapsed(next);
+  };
 
   // Select the first command once the list loads, and never strand the panel on a deleted one.
   useEffect(() => {
@@ -130,13 +147,59 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
     // .modal comes along for the shared body typography only (p.hint, inline <code>, .error) —
     // .commands-view overrides its padding and, unlike the Settings body, doesn't scroll.
     <div className="modal commands-view">
-      <Columns className={showLogs ? "sched-columns with-logs" : "sched-columns"}>
+      <Columns
+        className={`sched-columns${showLogs ? " with-logs" : ""}${
+          listCollapsed ? " list-collapsed" : ""
+        }`}
+      >
         <Column
           title="Commands"
           className="sched-list-column"
           // Drag the seam to its right to trade width with the configuration pane; double-click it
           // to go back to the default. Same for the run log's seam below.
           resize={{ cssVar: "--col-list", min: 150, max: 400 }}
+          // …or hide the list altogether, down to the rail below, when the configuration pane
+          // wants the width more than the list does.
+          collapsed={listCollapsed}
+          titleAction={
+            <IconButton
+              className="column-title-action"
+              aria-label="Hide the command list"
+              title="Hide the command list"
+              onClick={() => setCollapsed(true)}
+            >
+              <ChevronLeftIcon />
+            </IconButton>
+          }
+          rail={
+            <>
+              <IconButton
+                aria-label="Show the command list"
+                title="Show the command list"
+                onClick={() => setCollapsed(false)}
+              >
+                <ChevronRightIcon />
+              </IconButton>
+              <RailNav
+                ariaLabel="Command to configure"
+                items={commands.map((c) => ({
+                  id: c.id,
+                  label: commandLabel(c),
+                  running: snapshot.running.includes(c.id),
+                }))}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+              />
+              <IconButton
+                aria-label={showLogs ? "Hide the runs column" : "Show the runs column"}
+                title={showLogs ? "Hide runs" : "Show runs"}
+                aria-pressed={showLogs}
+                onClick={toggleLogs}
+              >
+                <LogsIcon />
+              </IconButton>
+            </>
+          }
           footer={
             <>
               <div className="sched-transfer">
@@ -157,14 +220,7 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
               </div>
               {/* Toggles the third column. Off by default so the two working columns stay roomy in
                   a narrow window; the choice sticks for the rest of the session. */}
-              <Button
-                className="sched-logs-toggle"
-                aria-pressed={showLogs}
-                onClick={() => {
-                  logsColumnOpen = !showLogs;
-                  setShowLogs(logsColumnOpen);
-                }}
-              >
+              <Button className="sched-logs-toggle" aria-pressed={showLogs} onClick={toggleLogs}>
                 <LogsIcon /> {showLogs ? "Hide logs" : "Logs"}
               </Button>
             </>

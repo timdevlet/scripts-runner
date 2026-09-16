@@ -35,7 +35,9 @@ const MAX_SHARE = 0.4;
 const KEY_STEP = 16;
 
 // What Columns reads off its children. Column accepts these; nothing else is introspected.
-type PaneProps = { title?: ReactNode; resize?: ColumnResize };
+// `collapsed` is read here only to drop the divider beside a pane that has zipped itself down to
+// a rail — there is nothing left to resize.
+type PaneProps = { title?: ReactNode; resize?: ColumnResize; collapsed?: boolean };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -166,7 +168,7 @@ export function Columns({ className, children }: { className?: string; children:
         const sized = before?.props.resize ? before : p;
         return (
           <Fragment key={p.key ?? i}>
-            {spec && (
+            {spec && !sized.props.collapsed && (
               <Resizer
                 spec={spec}
                 grow={before?.props.resize ? 1 : -1}
@@ -192,21 +194,47 @@ export function Columns({ className, children }: { className?: string; children:
 // Pass scroll={false} when the children do their own scrolling (RunHistory's strip-over-output
 // needs the full height to divide up); the body then just hands them the space. `resize` isn't used
 // here — Columns reads it off this element to build the divider beside it.
+//
+// `collapsed` zips the whole pane down to a narrow rail: title, body and footer all go, and `rail`
+// is what's left — a column of icon buttons, one of which brings the pane back. The caller still
+// has to narrow the pane's grid track (the widths are its stylesheet's, not ours); what's here is
+// only what the pane itself renders. `titleAction` is the control that collapses it, in the title
+// bar where its counterpart on the rail is.
 export function Column({
   title,
+  titleAction,
   footer,
   scroll = true,
+  collapsed = false,
+  rail,
   className,
   children,
 }: PaneProps & {
+  titleAction?: ReactNode;
   footer?: ReactNode;
   scroll?: boolean;
+  rail?: ReactNode;
   className?: string;
   children: ReactNode;
 }) {
+  const classes = ["column", collapsed ? "column-rail" : "", className].filter(Boolean).join(" ");
+
+  if (collapsed) {
+    return (
+      <section className={classes} aria-label={typeof title === "string" ? title : undefined}>
+        {rail}
+      </section>
+    );
+  }
+
   return (
-    <section className={className ? `column ${className}` : "column"}>
-      {title != null && <h4 className="column-title">{title}</h4>}
+    <section className={classes}>
+      {title != null && (
+        <h4 className="column-title">
+          <span className="column-title-text">{title}</span>
+          {titleAction}
+        </h4>
+      )}
       {scroll ? (
         <ScrollArea className="column-body">{children}</ScrollArea>
       ) : (
