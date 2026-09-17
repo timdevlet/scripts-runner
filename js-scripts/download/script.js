@@ -6,6 +6,14 @@
 //          the only way to show real filenames and resolutions.
 // limit    How many heroes per game, best first (default 5).
 //
+// favoritesOnly
+//          Download art only for games starred in the Steam library — the
+//          built-in "Favorites" collection, read straight out of Steam's own
+//          collection store, so the list matches what the library shows. Across
+//          every account in play: a game starred in either one counts. Naming
+//          appids in the game field bypasses this, as it bypasses every other
+//          filter.
+//
 // apiKey   Leave as "env" to read STEAM_GRID_API_KEY from the environment, and
 //          then from the file named by envFile (default .env, relative to the
 //          working directory). Typing the key here instead works, but it is
@@ -23,9 +31,10 @@
 // game's grid images, so the companion script applies it like any other.
 //
 // A name lookup only counts when it matches a SteamGridDB title exactly, once
-// punctuation and case are ignored. Anything looser downloads the wrong game's
-// art: searching "Baldurs Gate 3" turns up "Baldur\'s Gate 3 Toolkit" and plain
-// "Baldur\'s Gate" above the game itself. A near-miss is reported with what
+// case, punctuation, accents, a leading "The", "&" against "and" and roman
+// numerals against digits are folded away. Anything looser downloads the wrong
+// game's art: searching "Baldurs Gate 3" turns up "Baldur\'s Gate 3 Toolkit" and
+// plain "Baldur\'s Gate" above the game itself. A near-miss is reported with what
 // SteamGridDB does have, so the name can be corrected in Steam.
 // steam / account   "auto", or an explicit Steam folder / account id.
 // styles   "any", or a comma list: alternate, blurred, material, white_logo.
@@ -111,6 +120,7 @@ const opts = {
   nsfw: triState({{nsfw:one(false|true|any)=false}}, "false"),
   humor: triState({{humor:one(any|true|false)=any}}, "any"),
   includeNonGames: isTrue({{includeNonGames:bool=false}}),
+  favoritesOnly: isTrue({{favoritesOnly:bool=false}}),
   concurrency: num({{concurrency=4}}, 4, 1, 8),
   maxMB: num({{maxMB=25}}, 25, 1, 500),
 };
@@ -575,6 +585,99 @@ function discoverLibrary(steamRoot, accounts) {
 }
 
 // ---------------------------------------------------------------------------
+// Favorites
+// ---------------------------------------------------------------------------
+
+// The star in the Steam library is a built-in collection with the id "favorite",
+// and Steam keeps each account's collections in one of two places:
+//
+//   config/cloudstorage/cloud-storage-namespace-1.json
+//       the current one. A JSON array of [key, record] pairs; the record for
+//       "user-collections.favorite" carries the collection as a JSON *string*.
+//   config/localconfig.vdf
+//       older builds, under WebStorage/user-collections — the same JSON, this
+//       time as one escaped VDF string, and holding every collection at once.
+//
+// Unwrapped, both are the same shape: { added: [appid...], removed: [appid...] }.
+// The fallback only runs when cloudstorage had nothing to say: on a machine that
+// has both, the localconfig copy is years stale and would resurrect games that
+// were unstarred long ago.
+
+function favoriteAppid(id) {
+  const n = Number(id);
+  if (!Number.isFinite(n)) return null;
+  // A non-Steam shortcut's appid is stored signed here in some builds, while
+  // Steam files that shortcut's art under the unsigned form — which is the form
+  // the rest of this script matches on, so normalize before comparing.
+  return String(n < 0 ? n >>> 0 : n);
+}
+
+// added first, then removed: Steam leaves an unstarred game in `added` and
+// records it in `removed`, so only applying them in that order gives the list
+// the library is actually showing.
+function collectFavorites(collection, into) {
+  if (!collection || typeof collection !== "object") return;
+  for (const id of Array.isArray(collection.added) ? collection.added : []) {
+    const appid = favoriteAppid(id);
+    if (appid) into.add(appid);
+  }
+  for (const id of Array.isArray(collection.removed) ? collection.removed : []) {
+    const appid = favoriteAppid(id);
+    if (appid) into.delete(appid);
+  }
+}
+
+// Returns whether a favorite collection was found at all — not whether it held
+// anything — so an account with zero stars is not mistaken for one whose
+// collections simply live in the older file.
+function favoritesFromCloudStorage(configDir, into) {
+  const file = path.join(configDir, "cloudstorage", "cloud-storage-namespace-1.json");
+  if (!isFile(file)) return false;
+  let entries;
+  try { entries = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return false; }
+  if (!Array.isArray(entries)) return false;
+  let found = false;
+  for (const entry of entries) {
+    // [key, record] pairs today; a bare record is tolerated in case that flattens.
+    const [key, record] = Array.isArray(entry) ? entry : [entry?.key, entry];
+    if (key !== "user-collections.favorite") continue;
+    if (!record || record.is_deleted || !record.value) continue;
+    try { collectFavorites(JSON.parse(record.value), into); found = true; } catch { /* keep looking */ }
+  }
+  return found;
+}
+
+function favoritesFromLocalConfig(configDir, into) {
+  const file = path.join(configDir, "localconfig.vdf");
+  if (!isFile(file)) return;
+  let text;
+  try { text = fs.readFileSync(file, "utf8"); } catch { return; }
+  const m = text.match(/"user-collections"\s+"((?:[^"\\]|\\.)*)"/i);
+  if (!m) return;
+  let collections;
+  try { collections = JSON.parse(unescapeVdf(m[1])); } catch { return; }
+  collectFavorites(collections?.favorite, into);
+}
+
+// Every appid starred in one account's library.
+function discoverAccountFavorites(steamRoot, accountId) {
+  const configDir = path.join(steamRoot, "userdata", accountId, "config");
+  const ids = new Set();
+  if (!favoritesFromCloudStorage(configDir, ids)) favoritesFromLocalConfig(configDir, ids);
+  return ids;
+}
+
+// The union across the accounts in play. Star lists are per account, so a game
+// starred in either of two accounts on one machine counts as a favorite.
+function discoverFavorites(steamRoot, accounts) {
+  const ids = new Set();
+  for (const accountId of accounts) {
+    for (const id of discoverAccountFavorites(steamRoot, accountId)) ids.add(id);
+  }
+  return ids;
+}
+
+// ---------------------------------------------------------------------------
 // Names and types (appid -> display name, app type)
 // ---------------------------------------------------------------------------
 
@@ -999,11 +1102,39 @@ async function fetchHeroes(apiFetch, endpoint, options) {
   return images;
 }
 
-const normalizeTitle = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+// Steam and SteamGridDB disagree on more than punctuation, and each way they
+// disagree is a game that silently downloads nothing: "Pokemon" against
+// "Pokémon", "Ori & the Blind Forest" against "Ori and the Blind Forest",
+// "The Witcher 3" against "Witcher 3", "Space Marine II" against "Space Marine 2",
+// and a spelled-out "(tm)" where the other side carries the glyph. Accents are
+// folded rather than dropped: deleting them leaves "pokmon", which matches
+// nothing at all.
+//
+// Single-letter numerals are deliberately missing from ROMAN. Folding them would
+// make "Mega Man X" and "Mega Man 10" the same title, and those are two games.
+const ROMAN = new Map(Object.entries({
+  ii: "2", iii: "3", iv: "4", vi: "6", vii: "7", viii: "8", ix: "9", xi: "11",
+  xii: "12", xiii: "13", xiv: "14", xv: "15", xvi: "16", xvii: "17", xviii: "18",
+  xix: "19", xx: "20",
+}));
+
+const normalizeTitle = (s) =>
+  String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")     // é -> e, rather than losing the letter
+    .replace(/\((?:tm|r|c)\)/gi, " ")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/^the /, "")
+    .split(" ")
+    .map((word) => ROMAN.get(word) || word)
+    .join("");
 
 // Taking data[0] from autocomplete without checking maps "Half-Life 2 RTX" onto
 // "Half-Life 2" and downloads art for the wrong game. Only an exact title wins:
-// case, punctuation and spacing are ignored, nothing else is. Everything looser
+// the equivalences above are folded, nothing else is. Everything looser
 // that was tried here picked something wrong — "Baldurs Gate 3" matches
 // "Baldur\'s Gate 3 Toolkit" on containment and plain "Baldur\'s Gate" on length,
 // and both download art for a different product than the one asked for.
@@ -1457,10 +1588,29 @@ async function run(options, hooks = {}) {
       );
     }
     const all = resolveLibraryGames(steamRoot, appids, shortcuts, (m) => log(m, "warn"));
+
+    // Read before the loop, and checked before the type filter: a starred game is
+    // one the user picked by hand, so what Steam calls it is beside the point.
+    const favorites = options.favoritesOnly ? discoverFavorites(steamRoot, accounts) : null;
+    if (favorites) {
+      // Zero stars would otherwise plan nothing and read as an empty library
+      // rather than as the filter doing exactly what it was asked to.
+      if (favorites.size === 0) {
+        throw new UserError(
+          `favoritesOnly is on, but Steam lists no favorites for ${accounts.length ? `account(s) ${accounts.join(", ")}` : "any account"}.\n` +
+          "Star some games in the Steam library (right-click a game -> Add to -> Favorites) and let\n" +
+          "Steam save them, or turn favoritesOnly off."
+        );
+      }
+      log(`Favorites only: ${favorites.size} starred game(s); everything else is skipped.`);
+    }
+
     const kept = [];
     const filtered = [];
+    let notFavorite = 0;
     let unknownType = 0;
     for (const game of all.values()) {
+      if (favorites && !favorites.has(game.appid)) { notFavorite++; continue; }
       // An appid with no type at all is far more likely to be an owned game that
       // simply isn't in the local appinfo cache than it is to be a tool, so keep it.
       if (!game.type) { unknownType++; kept.push(game); continue; }
@@ -1468,8 +1618,14 @@ async function run(options, hooks = {}) {
       else filtered.push(game);
     }
     kept.sort((a, b) => (a.name || a.appid).localeCompare(b.name || b.appid));
-    log(`  -> ${kept.length} game(s), ${filtered.length} filtered out by type, ${unknownType} with unknown type (kept)`,
+    log(`  -> ${kept.length} game(s), ` +
+      (favorites ? `${notFavorite} not starred, ` : "") +
+      `${filtered.length} filtered out by type, ${unknownType} with unknown type (kept)`,
       kept.length > 0 ? "info" : "warn");
+    if (favorites && kept.length === 0) {
+      log("  Every starred game was filtered out. A star on something Steam classes as a tool or\n" +
+        "  demo needs includeNonGames to come through.", "warn");
+    }
     if (shortcuts.size > 0) {
       log(`  -> ${shortcuts.size} non-Steam shortcut(s) included; these are matched by name: ${[...shortcuts.values()].join(", ")}`);
     }

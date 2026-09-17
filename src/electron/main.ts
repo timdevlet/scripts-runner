@@ -73,6 +73,12 @@ function pushHistory(entry: LogEntry): void {
   if (history.length > MAX_HISTORY) history.shift();
 }
 
+// Windows draws the window and taskbar icon unmasked, so it gets the circular artwork on a
+// transparent canvas; icon.png is the full-bleed square macOS and Linux expect.
+function windowIconFile(): string {
+  return process.platform === "win32" ? "icon-win.png" : "icon.png";
+}
+
 function createWindow(): BrowserWindow {
   const w = new BrowserWindow({
     width: 860,
@@ -80,7 +86,7 @@ function createWindow(): BrowserWindow {
     minWidth: 700,
     minHeight: 500,
     title: "Command Scheduler",
-    icon: nativeImage.createFromPath(path.join(__dirname, "icon.png")),
+    icon: nativeImage.createFromPath(path.join(__dirname, windowIconFile())),
     backgroundColor: windowBackground(),
     autoHideMenuBar: true,
     ...(process.platform === "darwin"
@@ -226,8 +232,12 @@ async function start(): Promise<void> {
   ipcMain.handle("settings:get", () => getSettings());
   ipcMain.handle("settings:save", async (_e, partial: unknown) => {
     const raw = typeof partial === "object" && partial !== null ? partial : {};
-    await saveSettings(raw as Partial<AppSettings>);
+    const before = await getSettings();
+    const next = await saveSettings(raw as Partial<AppSettings>);
     await applySettingsToRunningApp();
+    // The Scripts tab is reading a different folder now. Nothing else would notice, so the
+    // scheduler is told to re-read and push the new list to the tab.
+    if (next.scriptsDir !== before.scriptsDir) await schedulerBridge?.reloadScripts();
     return { ok: true as const };
   });
 

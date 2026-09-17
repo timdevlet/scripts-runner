@@ -18,14 +18,22 @@ import { TextInput } from "../../components/TextInput";
 //
 // Every control reads and writes the same string the text input always did, so switching a hole's
 // kind never strands a stored value or changes what the script receives.
+//
+// A :secret hole is the one kind with no control at all. Its value lives in the vault, and this
+// tab is not allowed to see it — so the row says whether it is set and where to set it, which is
+// the only thing the user can act on from here.
 export function ScriptParamFields({
   params,
   values,
+  secretNames,
   disabled,
   onChange,
 }: {
   params: ScriptParam[];
   values: Record<string, string>;
+  // The vault entries that currently exist, so a hole naming one that doesn't says so before the
+  // run has to refuse it.
+  secretNames: readonly string[];
   disabled: boolean;
   onChange: (name: string, value: string) => void;
 }) {
@@ -36,6 +44,18 @@ export function ScriptParamFields({
         const id = `scriptParam-${param.name}`;
         const value = Object.hasOwn(values, param.name) ? values[param.name] : param.defaultValue;
         const set = (next: string) => onChange(param.name, next);
+
+        if (param.kind === "secret") {
+          const set = secretNames.includes(param.name);
+          return (
+            <p className="hint script-secret" key={param.name}>
+              <code>{param.name}</code>{" "}
+              {set
+                ? "is set in Settings → Secrets."
+                : "is not set yet — add it in Settings → Secrets."}
+            </p>
+          );
+        }
 
         // The toggle is its own labelled row (label left, switch right), so it skips the Field
         // wrapper the other kinds share.

@@ -22,7 +22,14 @@ import {
   type ScheduledCommand,
   serializeScheduleFile,
 } from "../domain/scheduled.js";
-import { jsScriptsPath, loadJsScripts, saveJsScripts } from "../js-script-store.js";
+import { secretNameError } from "../domain/secrets.js";
+import {
+  legacyJsScriptsPath,
+  loadJsScripts,
+  migrateLegacyJsScripts,
+  resolveScriptsDir,
+  saveJsScripts,
+} from "../js-script-store.js";
 import { log, logError } from "../log.js";
 import { primeLoginShell } from "../os/run-command.js";
 import {
@@ -31,7 +38,9 @@ import {
   scheduledCommandsPath,
 } from "../scheduled-store.js";
 import { createScheduler, type Scheduler } from "../scheduler.js";
+import { loadSecrets, saveSecrets, secretsPath } from "../secrets-store.js";
 import { installScriptEditIpc } from "./script-edit.js";
+import { getSettings } from "./settings.js";
 
 // Snapshot pushes are coalesced: a chatty command emits a line at a time, and the renderer only
 // needs to repaint at human speed.
@@ -43,6 +52,10 @@ const PREVIEW_RUNS = 3;
 const JSON_FILTERS = [{ name: "JSON", extensions: ["json"] }];
 
 export interface SchedulerBridge {
+  // Re-read the scripts directory and push the result to the Scripts tab. Called when the user
+  // points the scriptsDir setting somewhere else — nothing else would notice the folder the tab
+  // is showing has changed underneath it.
+  reloadScripts(): Promise<void>;
   // Stop ticking, kill live runs, and drop the IPC handlers (app quit).
   dispose(): void;
 }
@@ -50,7 +63,20 @@ export interface SchedulerBridge {
 export async function installSchedulerIpc(
   getWindow: () => BrowserWindow | null,
 ): Promise<SchedulerBridge> {
-  const scheduler: Scheduler = createScheduler();
+  // The secret vault, held in the main process for the life of the app: runs read it through the
+  // scheduler's `secrets` dep, and the renderer only ever learns which names exist. Same
+  // read-only-on-failure rule as the other stores — a file we couldn't parse is never written
+  // over, because doing so would drop every key in it.
+  let secrets: Record<string, string> = {};
+  let secretsError = "";
+  try {
+    secrets = await loadSecrets();
+  } catch (err) {
+    secretsError = `Could not read "${secretsPath()}": ${errorText(err)}`;
+    logError(`${secretsError} — secrets are unavailable until it's fixed or removed.`);
+  }
+
+  const scheduler: Scheduler = createScheduler({ secrets: () => secrets });
 
   // Read the user's login-shell PATH once, before anything can run: commands then resolve `node`,
   // `python`, … the way a terminal would, without every run re-sourcing (and re-printing) the
@@ -67,13 +93,38 @@ export async function installSchedulerIpc(
     logError(`${loadError} — the Commands tab is read-only until it's fixed or removed.`);
   }
 
+  // Where the scripts live. Held rather than re-resolved per call, so a save can never land in a
+  // different folder than the load it came from; reloadScripts is what moves it.
+  let scriptsDir = resolveScriptsDir((await getSettings()).scriptsDir);
   let scriptsLoadError = "";
-  try {
-    scheduler.setScripts(await loadJsScripts());
-  } catch (err) {
-    scriptsLoadError = `Could not read "${jsScriptsPath()}": ${errorText(err)}`;
-    logError(`${scriptsLoadError} — the Scripts tab is read-only until it's fixed or removed.`);
-  }
+
+  const readScripts = async (): Promise<void> => {
+    scriptsLoadError = "";
+    try {
+      let scripts = await loadJsScripts(scriptsDir);
+      // First run after the upgrade from the single js-scripts.json: only ever with an empty
+      // directory, so the move can't overwrite folders that are already there.
+      if (scripts.length === 0) {
+        const moved = await migrateLegacyJsScripts(scriptsDir);
+        if (moved > 0) {
+          log(
+            `Moved ${moved} script(s) from "${legacyJsScriptsPath()}" into "${scriptsDir}" — ` +
+              "one folder each, holding script.js and script.json.",
+          );
+          scripts = await loadJsScripts(scriptsDir);
+        }
+      }
+      scheduler.setScripts(scripts);
+    } catch (err) {
+      scriptsLoadError = `Could not read "${scriptsDir}": ${errorText(err)}`;
+      logError(`${scriptsLoadError} — the Scripts tab is read-only until it's fixed or removed.`);
+      // Empty, not stale: on a reload this folder is the one we just moved to, and leaving the
+      // previous folder's scripts on screen (and its schedules armed) would be a lie. The tab is
+      // read-only while the error stands, so nothing can be autosaved over.
+      scheduler.setScripts([]);
+    }
+  };
+  await readScripts();
 
   const armedCommands = scheduler.commands().filter((c) => c.enabled && c.cron.trim());
   const armedScripts = scheduler.scripts().filter((s) => s.enabled && s.cron.trim());
@@ -231,6 +282,68 @@ export async function installSchedulerIpc(
     }
   });
 
+  // Names only, never values: the vault's whole point is that the values stay in one file in one
+  // process, and a renderer that can't read them can't leak them to a devtools console or an
+  // errant render. The path comes along for the Settings hint.
+  const secretsResult = () => ({
+    ok: !secretsError,
+    error: secretsError,
+    names: Object.keys(secrets).sort((a, b) => a.localeCompare(b)),
+    path: secretsPath(),
+  });
+
+  ipcMain.handle("secrets:list", () => secretsResult());
+
+  ipcMain.handle("secrets:set", async (_e, payload: unknown) => {
+    if (secretsError) return { ...secretsResult(), ok: false as const };
+    const entry = typeof payload === "object" && payload !== null ? payload : {};
+    const name = String((entry as { name?: unknown }).name ?? "").trim();
+    const value = (entry as { value?: unknown }).value;
+    const nameError = secretNameError(name);
+    if (nameError) return { ...secretsResult(), ok: false as const, error: nameError };
+    if (typeof value !== "string" || value === "") {
+      return { ...secretsResult(), ok: false as const, error: "Give the secret a value." };
+    }
+    const existed = Object.hasOwn(secrets, name);
+    const next = { ...secrets, [name]: value };
+    try {
+      await saveSecrets(next);
+    } catch (err) {
+      return {
+        ...secretsResult(),
+        ok: false as const,
+        error: `Could not save secrets: ${errorText(err)}`,
+      };
+    }
+    secrets = next;
+    log(`Secret "${name}" was ${existed ? "updated" : "added"}.`);
+    return secretsResult();
+  });
+
+  ipcMain.handle("secrets:remove", async (_e, payload: unknown) => {
+    if (secretsError) return { ...secretsResult(), ok: false as const };
+    const name = typeof payload === "string" ? payload : "";
+    if (!Object.hasOwn(secrets, name)) return secretsResult();
+    const next = { ...secrets };
+    delete next[name];
+    try {
+      await saveSecrets(next);
+    } catch (err) {
+      return {
+        ...secretsResult(),
+        ok: false as const,
+        error: `Could not save secrets: ${errorText(err)}`,
+      };
+    }
+    secrets = next;
+    log(`Secret "${name}" was removed.`);
+    return secretsResult();
+  });
+
+  // The resolved absolute path, for the Settings field — the default is otherwise unknowable
+  // from the renderer, which sees only the empty string that stands for it.
+  ipcMain.handle("scripts:dir", () => scriptsDir);
+
   ipcMain.handle("scripts:list", () => ({
     ok: !scriptsLoadError,
     error: scriptsLoadError,
@@ -242,7 +355,7 @@ export async function installSchedulerIpc(
     if (scriptsLoadError) return { ok: false as const, error: scriptsLoadError };
     const scripts = normalizeJsScripts(payload);
     try {
-      await saveJsScripts(scripts);
+      await saveJsScripts(scriptsDir, scripts);
     } catch (err) {
       return { ok: false as const, error: `Could not save scripts: ${errorText(err)}` };
     }
@@ -316,6 +429,21 @@ export async function installSchedulerIpc(
   });
 
   return {
+    async reloadScripts() {
+      scriptsDir = resolveScriptsDir((await getSettings()).scriptsDir);
+      log(`Scripts folder is now "${scriptsDir}".`);
+      await readScripts();
+      const win = getWindow();
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("scripts:reloaded", {
+          ok: !scriptsLoadError,
+          error: scriptsLoadError,
+          scripts: scheduler.scripts(),
+          snapshot: scheduler.snapshot(),
+        });
+      }
+    },
+
     dispose() {
       unsubscribe();
       if (pushTimer) clearTimeout(pushTimer);
@@ -330,6 +458,10 @@ export async function installSchedulerIpc(
         "scheduler:preview",
         "scheduler:export",
         "scheduler:import",
+        "secrets:list",
+        "secrets:set",
+        "secrets:remove",
+        "scripts:dir",
         "scripts:list",
         "scripts:save",
         "scripts:run",

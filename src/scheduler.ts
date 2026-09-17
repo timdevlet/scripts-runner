@@ -26,7 +26,15 @@ import {
   extractScriptParams,
   resolveParamValues,
   scriptParamsFilled,
+  scriptSecretNames,
 } from "./domain/script-params.js";
+import {
+  extractSecretRefs,
+  missingSecrets,
+  pickSecrets,
+  redactSecrets,
+  rewriteCommandSecrets,
+} from "./domain/secrets.js";
 import { log, logError } from "./log.js";
 import { type RunHandle, runShellCommand } from "./os/run-command.js";
 import { runJsScript } from "./os/run-js-script.js";
@@ -46,6 +54,9 @@ interface SchedulerDeps {
     onOutput: (stream: "stdout" | "stderr", text: string) => void,
   ) => RunHandle;
   now?: () => number;
+  // The secret vault, read per run rather than held, so a key added in Settings applies to the
+  // next run without restarting anything. Only the names a job references are passed to it.
+  secrets?: () => Record<string, string>;
   log?: (msg: string) => void;
   logError?: (msg: string) => void;
   newId?: () => string;
@@ -82,7 +93,8 @@ export interface Scheduler {
 }
 
 export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
-  const run = deps.run ?? defaultRunner;
+  const vault = deps.secrets ?? ((): Record<string, string> => ({}));
+  const run = deps.run ?? ((job, onOutput) => defaultRunner(job, onOutput, vault()));
   const now = deps.now ?? (() => Date.now());
   const write = deps.log ?? log;
   const writeError = deps.logError ?? logError;
@@ -224,6 +236,17 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
             : "This script is already running.",
       };
     }
+    // Refused rather than started: an unset variable expands to nothing, and a request sent with
+    // an empty API key fails somewhere far less obvious than here.
+    const missing = missingSecrets(vault(), jobSecretNames(job));
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        error: `${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not set — add ${
+          missing.length === 1 ? "it" : "them"
+        } under Settings → Secrets.`,
+      };
+    }
 
     const label = jobLabel(job);
     const noun = jobNoun(job);
@@ -250,7 +273,13 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
       const params = extractScriptParams(job.source);
       const values = resolveParamValues(params, job.paramValues);
       for (const param of params) {
-        append(record, "system", `(${param.name} = ${JSON.stringify(values[param.name])})`);
+        // A secret has no stored value to print, and printing the one it resolves to is the whole
+        // thing this feature exists to avoid. The name is the useful part anyway.
+        const shown =
+          param.kind === "secret"
+            ? "(from Settings → Secrets)"
+            : JSON.stringify(values[param.name]);
+        append(record, "system", `(${param.name} = ${shown})`);
       }
     }
     if (job.cwd.trim()) append(record, "system", `(in ${job.cwd.trim()})`);
@@ -407,18 +436,39 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
   };
 }
 
+// The vault entries a job reads: {{NAME:secret}} holes and {{NAME}} field values for a script,
+// {{NAME}} references for a shell command.
+function jobSecretNames(job: RunnableJob): string[] {
+  return job.kind === "js"
+    ? scriptSecretNames(job.source, job.paramValues)
+    : extractSecretRefs(job.command);
+}
+
 // The real runner: a shell child process, or node on a compiled temp file for JS templates.
+//
+// Secrets are handed to both the same way — the referenced entries go into the child's
+// environment, and every line coming back is scrubbed of their values before anyone stores or
+// prints it, so a script that echoes its own key can't put it in the run log.
 function defaultRunner(
   job: RunnableJob,
   onOutput: (stream: "stdout" | "stderr", text: string) => void,
+  vault: Record<string, string>,
 ): RunHandle {
+  const secrets = pickSecrets(vault, jobSecretNames(job));
+  const values = Object.values(secrets);
+  const scrubbed: typeof onOutput =
+    values.length === 0
+      ? onOutput
+      : (stream, text) => onOutput(stream, redactSecrets(text, values));
+
   if (job.kind === "js") {
-    return runJsScript(job, onOutput);
+    return runJsScript({ ...job, secrets }, scrubbed);
   }
-  return runShellCommand(job.command, {
+  return runShellCommand(rewriteCommandSecrets(job.command, process.platform === "win32"), {
     cwd: job.cwd,
     // 0 (Unlimited) passes straight through as "no timer".
     timeoutMs: job.timeoutSeconds * 1000,
-    onOutput,
+    env: secrets,
+    onOutput: scrubbed,
   });
 }

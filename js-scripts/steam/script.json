@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "id": "f0ad7207-dac5-4d5d-9358-e02a33d4bd68",
+  "name": "Steam",
+  "order": 0,
+  "paramValues": {
+    "apply": "true",
+    "allAccounts": "true",
+    "coversDir": "/private/tmp/arts",
+    "pick": "random",
+    "coversOnly": "true"
+  },
+  "cron": "",
+  "enabled": false,
+  "cwd": "",
+  "timeoutSeconds": 300
+}

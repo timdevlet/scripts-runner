@@ -19,6 +19,10 @@ export function useScripts() {
   // with.
   const [editingExternally, setEditingExternally] = useState<string[]>([]);
   const readOnly = useRef(false);
+  // A list pushed from the main process (the scripts folder setting changed) is not an edit, so
+  // it must not come straight back as an autosave — that would write the folder we just left
+  // into the folder we just arrived at.
+  const adopting = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -28,6 +32,15 @@ export function useScripts() {
     // A save in VS Code lands here as a normal source edit, so it autosaves like any other.
     const unsubscribeSource = api.onJsScriptEditSource(({ id, source }) => {
       if (alive) setScripts((list) => list.map((s) => (s.id === id ? { ...s, source } : s)));
+    });
+    // The scripts folder changed under us: the main process has re-read it and sent the result.
+    const unsubscribeReloaded = api.onJsScriptsReloaded((result) => {
+      if (!alive) return;
+      adopting.current = true;
+      readOnly.current = !result.ok;
+      setScripts(result.scripts);
+      setSnapshot(result.snapshot);
+      setError(result.error);
     });
     const unsubscribeState = api.onJsScriptEditState(({ id, open }) => {
       if (!alive) return;
@@ -55,6 +68,7 @@ export function useScripts() {
       alive = false;
       unsubscribe();
       unsubscribeSource();
+      unsubscribeReloaded();
       unsubscribeState();
     };
   }, []);
@@ -65,6 +79,10 @@ export function useScripts() {
   useEffect(() => {
     if (loading || skipInitial.current) {
       if (!loading) skipInitial.current = false;
+      return;
+    }
+    if (adopting.current) {
+      adopting.current = false;
       return;
     }
     if (readOnly.current) return;

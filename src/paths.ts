@@ -1,4 +1,5 @@
-// Where the app keeps its writable files (settings.json, scheduled-commands.json, js-scripts.json).
+// Where the app keeps its writable files (settings.json, scheduled-commands.json, and the
+// js-scripts/ folder the Scripts tab stores each script in).
 //
 // Packaged builds live in a read-only asar, so main.ts redirects APP_DATA_DIR to userData (or the
 // portable exe folder) before the first read. In unpackaged / CLI use the files sit next to the

@@ -47,7 +47,8 @@ async function bundle(entry, outfile, { injectImportMeta = true } = {}) {
 // the packaged app only ships what it loads at runtime, so copy those into dist-electron/.
 // electron-builder reads build/icon.png and build/icon.ico straight from buildResources.
 const RUNTIME_ICONS = [
-  ["icon-256.png", "icon.png"], // BrowserWindow icon
+  ["icon-256.png", "icon.png"], // BrowserWindow icon (macOS, Linux)
+  ["icon-win-256.png", "icon-win.png"], // BrowserWindow icon (Windows, unmasked)
   ["tray/tray.png", "tray.png"], // macOS template glyph
   ["tray/tray@2x.png", "tray@2x.png"],
   ["tray/tray-white.png", "tray-white.png"], // Windows / Linux glyph

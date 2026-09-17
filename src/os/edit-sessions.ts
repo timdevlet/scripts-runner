@@ -1,9 +1,10 @@
 // Round-tripping a piece of text through an external editor.
 //
-// A JS script lives in js-scripts.json, not on disk, so editing it externally means giving it a
-// file to be: the text is written to a temp file, an editor is pointed at it, and every save is
-// read back and handed to `onSource`. The session ends when the editor says the file is closed —
-// the watcher stops and the temp file goes.
+// The app edits text it holds in memory, so editing it externally means giving it a file to be:
+// the text is written to a temp file, an editor is pointed at it, and every save is read back and
+// handed to `onSource`. The session ends when the editor says the file is closed — the watcher
+// stops and the temp file goes. (A JS script does have a script.js of its own on disk, but the
+// unsaved buffer in the app is what gets edited, not whatever was last written out.)
 //
 // Sync is deliberately one-way (file -> app). Two-way would mean racing the user's keystrokes in
 // two editors over one buffer; the caller warns in its UI instead.

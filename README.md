@@ -15,6 +15,32 @@ npm run electron:dev
 
 Commands are stored in `scheduled-commands.json` (project root in development; the app data folder when packaged). Export / Import on the Commands tab uses the same file format.
 
+## JS scripts
+
+The Scripts tab runs JavaScript you write yourself, with `{{name}}` holes that become fields you fill in before running. Each script is a folder of its own:
+
+```
+js-scripts/
+└── my-script/
+    ├── script.js      the source — a plain .js file, editable in any editor
+    └── script.json    name, parameter values, cron, working directory, timeout
+```
+
+The folder is named after the script, but the `id` in `script.json` is its identity, so renaming a script moves its folder without losing its run history. Settings → Scripts points the whole thing at any folder you like; blank means `js-scripts/` beside the other app data. An older `js-scripts.json` is moved into that layout the first time the app starts without one.
+
+## Secrets
+
+API keys and tokens live in their own file, so nothing you might commit, export or share has a key in it. Add them under Settings → Secrets, then refer to them by name:
+
+```
+Commands tab   curl -H "key: {{DB_API_KEY}}" https://api.example.com
+Scripts tab    const res = await fetch(url, { headers: { key: {{DB_API_KEY:secret}} } })
+```
+
+The value is never substituted into the command or the script. It is passed to the run through its environment — `{{DB_API_KEY}}` expands the way `$DB_API_KEY` does (`%DB_API_KEY%` on Windows), and `{{DB_API_KEY:secret}}` compiles to `process.env.DB_API_KEY` — so keep a reference out of single quotes, where a shell would not expand it. A run only ever receives the secrets it names, run output has their values masked before it reaches the log, and a run whose secret is not set is refused by name rather than started with an empty value.
+
+Secrets are stored in `secrets.json` next to the other app data, written so that only your account can read it. That is the whole of the protection: it is a config file, like a `.netrc` or an `.env`, not an encrypted store — anything running as you can read it. What it buys you is that your scripts folder holds no keys, so it is safe to put in git.
+
 ## Scripts
 
 | Command | What it does |

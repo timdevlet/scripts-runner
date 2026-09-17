@@ -2,7 +2,7 @@
 // Dry-run unless apply is true. Fully restart Steam to see changes.
 //
 // action: run | list-backups | restore
-// apply / allAccounts / skipExisting / coversOnly: true or false
+// apply / allAccounts / skipExisting / coversOnly / favoritesOnly: true or false
 // steam / account / game / coversDir / restore: leave blank if unused
 //
 // coversDir: a folder of wide background images (the appid must appear in each
@@ -12,6 +12,12 @@
 // coversOnly: plan ONLY the games that folder matched, instead of also falling
 // back to Steam's own hero art for everything else. Five images with an appid in
 // the name means five games touched, and the rest of the library is left alone.
+//
+// favoritesOnly: plan ONLY the games starred in the Steam library — the built-in
+// "Favorites" collection, read straight out of Steam's own collection store, so
+// the list matches what the library shows. It is a per-account list, so each
+// account is narrowed to its own stars. Stacks with coversOnly and game: every
+// one of them narrows the plan further.
 //
 // pick: first | random. What to do when the covers folder holds several images
 // for the same appid (which is exactly what the companion "Steam Heroes from
@@ -53,6 +59,7 @@ const opts = {
   skipExisting: isTrue({{skipExisting:bool=false}}),
   coversDir: unset({{coversDir:dir}}),
   coversOnly: isTrue({{coversOnly:bool=false}}),
+  favoritesOnly: isTrue({{favoritesOnly:bool=false}}),
   pick: choice({{pick:one(first|random)=first}}, ["first", "random"], "first"),
   restore: unset({{restore}}),
 };
@@ -443,6 +450,99 @@ function discoverShortcuts(steamRoot, accounts) {
 }
 
 // ---------------------------------------------------------------------------
+// Favorites
+// ---------------------------------------------------------------------------
+
+// The star in the Steam library is a built-in collection with the id "favorite",
+// and Steam keeps each account's collections in one of two places:
+//
+//   config/cloudstorage/cloud-storage-namespace-1.json
+//       the current one. A JSON array of [key, record] pairs; the record for
+//       "user-collections.favorite" carries the collection as a JSON *string*.
+//   config/localconfig.vdf
+//       older builds, under WebStorage/user-collections — the same JSON, this
+//       time as one escaped VDF string, and holding every collection at once.
+//
+// Unwrapped, both are the same shape: { added: [appid...], removed: [appid...] }.
+// The fallback only runs when cloudstorage had nothing to say: on a machine that
+// has both, the localconfig copy is years stale and would resurrect games that
+// were unstarred long ago.
+
+function favoriteAppid(id) {
+  const n = Number(id);
+  if (!Number.isFinite(n)) return null;
+  // A non-Steam shortcut's appid is stored signed here in some builds, while
+  // Steam files that shortcut's art under the unsigned form — which is the form
+  // the rest of this script matches on, so normalize before comparing.
+  return String(n < 0 ? n >>> 0 : n);
+}
+
+// added first, then removed: Steam leaves an unstarred game in `added` and
+// records it in `removed`, so only applying them in that order gives the list
+// the library is actually showing.
+function collectFavorites(collection, into) {
+  if (!collection || typeof collection !== "object") return;
+  for (const id of Array.isArray(collection.added) ? collection.added : []) {
+    const appid = favoriteAppid(id);
+    if (appid) into.add(appid);
+  }
+  for (const id of Array.isArray(collection.removed) ? collection.removed : []) {
+    const appid = favoriteAppid(id);
+    if (appid) into.delete(appid);
+  }
+}
+
+// Returns whether a favorite collection was found at all — not whether it held
+// anything — so an account with zero stars is not mistaken for one whose
+// collections simply live in the older file.
+function favoritesFromCloudStorage(configDir, into) {
+  const file = path.join(configDir, "cloudstorage", "cloud-storage-namespace-1.json");
+  if (!isFile(file)) return false;
+  let entries;
+  try { entries = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return false; }
+  if (!Array.isArray(entries)) return false;
+  let found = false;
+  for (const entry of entries) {
+    // [key, record] pairs today; a bare record is tolerated in case that flattens.
+    const [key, record] = Array.isArray(entry) ? entry : [entry?.key, entry];
+    if (key !== "user-collections.favorite") continue;
+    if (!record || record.is_deleted || !record.value) continue;
+    try { collectFavorites(JSON.parse(record.value), into); found = true; } catch { /* keep looking */ }
+  }
+  return found;
+}
+
+function favoritesFromLocalConfig(configDir, into) {
+  const file = path.join(configDir, "localconfig.vdf");
+  if (!isFile(file)) return;
+  let text;
+  try { text = fs.readFileSync(file, "utf8"); } catch { return; }
+  const m = text.match(/"user-collections"\s+"((?:[^"\\]|\\.)*)"/i);
+  if (!m) return;
+  let collections;
+  try { collections = JSON.parse(unescapeVdf(m[1])); } catch { return; }
+  collectFavorites(collections?.favorite, into);
+}
+
+// Every appid starred in one account's library.
+function discoverAccountFavorites(steamRoot, accountId) {
+  const configDir = path.join(steamRoot, "userdata", accountId, "config");
+  const ids = new Set();
+  if (!favoritesFromCloudStorage(configDir, ids)) favoritesFromLocalConfig(configDir, ids);
+  return ids;
+}
+
+// The union across the accounts in play. Star lists are per account, so a game
+// starred in either of two accounts on one machine counts as a favorite.
+function discoverFavorites(steamRoot, accounts) {
+  const ids = new Set();
+  for (const accountId of accounts) {
+    for (const id of discoverAccountFavorites(steamRoot, accountId)) ids.add(id);
+  }
+  return ids;
+}
+
+// ---------------------------------------------------------------------------
 // Game-name discovery (appid -> display name)
 // ---------------------------------------------------------------------------
 
@@ -671,6 +771,15 @@ function planAccount(steamRoot, accountId, opts, names) {
   if (opts.coversOnly) {
     appids = appids.filter((id) => sources.get(id).kind === "folder-cover");
   }
+  // Favorites are a per-account list and the grid folder being planned is this
+  // account's, so the stars are read here rather than once for the whole run.
+  let favoritesStats = null;
+  if (opts.favoritesOnly) {
+    const favorites = discoverAccountFavorites(steamRoot, accountId);
+    const before = appids.length;
+    appids = appids.filter((id) => favorites.has(id));
+    favoritesStats = { starred: favorites.size, kept: appids.length, dropped: before - appids.length };
+  }
   if (opts.game) {
     const wanted = String(opts.game).trim();
     appids = appids.filter((id) => id === wanted);
@@ -700,7 +809,12 @@ function planAccount(steamRoot, accountId, opts, names) {
     });
   }
 
-  return { accountId, gridDir, items, unmatchedCovers, coversStats, coversOnly: !!opts.coversOnly };
+  return {
+    accountId, gridDir, items, unmatchedCovers, coversStats,
+    coversOnly: !!opts.coversOnly,
+    favoritesOnly: !!opts.favoritesOnly,
+    favoritesStats,
+  };
 }
 
 const ACTIONS = ["write", "overwrite", "skip-existing", "skip-same", "skip-format"];
@@ -939,11 +1053,24 @@ function formatPlanLines(plan) {
     ));
   }
 
+  // The favorites filter, if it is on: what this account has starred, and how
+  // much art it turned away — otherwise a short plan looks like missing art.
+  const fav = plan.favoritesStats;
+  if (fav) {
+    lines.push([
+      `  favorites: ${fav.starred} starred in this account, ${fav.kept} of them planned, ` +
+      `${fav.dropped} game(s) with art skipped as not starred`,
+      fav.kept > 0 ? "info" : "warn",
+    ]);
+  }
+
   if (plan.items.length === 0) {
     lines.push([
-      plan.coversOnly
-        ? "  No image in the covers folder matched a game in this account, so there is nothing to do."
-        : "  No games with a background (hero) image found.",
+      fav
+        ? "  No starred game in this account has a background to use, so there is nothing to do."
+        : plan.coversOnly
+          ? "  No image in the covers folder matched a game in this account, so there is nothing to do."
+          : "  No games with a background (hero) image found.",
       "warn",
     ]);
   } else {
@@ -991,7 +1118,7 @@ function formatPlanLines(plan) {
 // Run the whole operation. `onLog(message, level)` receives every human-readable
 // line as it happens; the return value carries the structured plan for a UI.
 //
-// opts: { apply, steam, account, allAccounts, game, skipExisting, coversDir, coversOnly }
+// opts: { apply, steam, account, allAccounts, game, skipExisting, coversDir, coversOnly, favoritesOnly }
 function run(opts, hooks = {}) {
   const { onLog = () => {}, onProgress } = hooks;
   const log = (m, level = "info") => onLog(m, level);
@@ -1034,6 +1161,20 @@ function run(opts, hooks = {}) {
 
   const accounts = resolveAccounts(steamRoot, opts);
   log(`Accounts: ${accounts.join(", ")}`);
+
+  // Checked up front, across every account: with no stars anywhere the run would
+  // plan nothing and read as missing art rather than as the filter doing its job.
+  if (opts.favoritesOnly) {
+    const starred = discoverFavorites(steamRoot, accounts);
+    if (starred.size === 0) {
+      throw new UserError(
+        `favoritesOnly is on, but Steam lists no favorites for account(s) ${accounts.join(", ")}.\n` +
+        "Star some games in the Steam library (right-click a game -> Add to -> Favorites) and let\n" +
+        "Steam save them, or turn favoritesOnly off."
+      );
+    }
+    log(`Favorites only: ${starred.size} starred game(s) across ${accounts.length} account(s); the rest are left alone.`);
+  }
   log(opts.apply ? "Mode: APPLY (writing files)" : "Mode: dry-run (no changes)", opts.apply ? "warn" : "info");
 
   // Resolve names only for the appids we actually reference — hero-art appids across

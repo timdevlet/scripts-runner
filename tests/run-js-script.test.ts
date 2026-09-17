@@ -38,4 +38,24 @@ describe("runJsScript", () => {
     const outcome = await handle.done;
     expect(outcome.code).not.toBe(0);
   });
+  // A secret reaches the script through the child's environment: {{K:secret}} compiles to a
+  // process.env read, so the value is never written into the temp file this runs from.
+  it("passes a secret through the environment, not the compiled body", async () => {
+    setLoginShellPath(process.env.PATH ?? "");
+    const out: string[] = [];
+    const handle = runJsScript(
+      {
+        source: "console.log({{API_KEY:secret}}); console.log(typeof params.API_KEY);",
+        paramValues: {},
+        cwd: "",
+        timeoutSeconds: 15,
+        secrets: { API_KEY: "s3cret" },
+      },
+      (stream, text) => {
+        if (stream === "stdout") out.push(text);
+      },
+    );
+    expect((await handle.done).code).toBe(0);
+    expect(out).toEqual(["s3cret", "undefined"]);
+  });
 });

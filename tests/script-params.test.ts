@@ -11,6 +11,7 @@ import {
   type ScriptParam,
   type ScriptParamKind,
   scriptParamsFilled,
+  secretParamNames,
 } from "../src/domain/script-params.js";
 
 // The untyped shape, spelled once: a bare {{hole}} is a text param with no options.
@@ -176,5 +177,74 @@ describe("rewrite / compile", () => {
     expect(compiled.startsWith('const params = Object.freeze({"on":"true","styles":"a,b"});')).toBe(
       true,
     );
+  });
+});
+
+// {{NAME:secret}} — the one kind with no field, no stored value and no default: it names an entry
+// in the vault, and the value reaches the run through the environment instead of this module.
+describe("secret params", () => {
+  it("is extracted like any other kind, with no default", () => {
+    expect(extractScriptParams("fetch(url, { key: {{API_KEY:secret}} })")).toEqual([
+      param("API_KEY", "", "secret"),
+    ]);
+  });
+
+  // Writing a value into the source is exactly what this kind exists to prevent, so a default is
+  // dropped rather than honoured.
+  it("ignores a default written into the hole", () => {
+    expect(extractScriptParams("{{API_KEY:secret=s3cret}}")).toEqual([
+      param("API_KEY", "", "secret"),
+    ]);
+  });
+
+  it("names the vault entries a source reads", () => {
+    expect(secretParamNames("a({{A:secret}}); b({{dir}}); c({{B:secret}}); d({{A}});")).toEqual([
+      "A",
+      "B",
+    ]);
+  });
+
+  it("compiles to a process.env read, including where the hole is repeated bare", () => {
+    expect(rewriteScriptSource("x({{API_KEY:secret}}); y({{API_KEY}});")).toBe(
+      "x(process.env.API_KEY); y(process.env.API_KEY);",
+    );
+  });
+
+  // The compiled body is written to a temp file for the length of the run. A secret in the frozen
+  // params object would be a plaintext copy of it sitting on disk.
+  it("is left out of the params prelude even when a value was somehow stored", () => {
+    const compiled = compileJsScript("use({{API_KEY:secret}}, {{dir}});", {
+      API_KEY: "s3cret",
+      dir: "/tmp",
+    });
+    expect(compiled).not.toContain("s3cret");
+    expect(compiled).toContain('const params = Object.freeze({"dir":"/tmp"});');
+  });
+
+  // A value typed in before the hole declared its kind leaves script.json at the next save.
+  it("is pruned from the stored values", () => {
+    expect(
+      pruneParamValues("{{API_KEY:secret}} {{dir}}", { API_KEY: "s3cret", dir: "/tmp" }),
+    ).toEqual({ dir: "/tmp" });
+  });
+
+  // Whether the vault holds it isn't knowable here — the runner checks that, and refuses the run
+  // by name. Blocking the schedule would arm nothing and explain nothing.
+  it("never blocks a schedule for want of a value", () => {
+    expect(scriptParamsFilled("{{API_KEY:secret}}", {})).toBe(true);
+  });
+});
+
+describe("whitespace in a hole", () => {
+  it("reads {{ name }} as the same hole as {{name}}", () => {
+    expect(extractScriptParams("a({{ dir }}); b({{dir}});")).toEqual([param("dir")]);
+    expect(rewriteScriptSource("a({{ dir }})")).toBe("a(params.dir)");
+  });
+
+  it("allows it around a kind and a default", () => {
+    expect(extractScriptParams("{{ apply : bool = yes }}")).toEqual([
+      param("apply", "true", "bool"),
+    ]);
+    expect(extractScriptParams("{{ out : dir = /tmp }}")).toEqual([param("out", "/tmp", "dir")]);
   });
 });

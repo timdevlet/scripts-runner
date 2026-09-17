@@ -37,10 +37,22 @@ export type JsScriptsImportResult =
   | { ok: true; scripts: JsScript[] }
   | { ok: false; cancelled?: true; error?: string };
 export type SettingsSaveResult = { ok: true } | { ok: false; error?: string };
+// The secret vault, as much of it as the renderer is ever told: which names are set, and where the
+// file lives. Values stay in the main process. Every mutation answers with the fresh list, so the
+// Settings tab never has to ask again.
+export type SecretsResult = {
+  ok: boolean;
+  error: string;
+  names: string[];
+  path: string;
+};
 // The native folder chooser behind "dir" script params.
 export type DirectoryPickResult =
   | { ok: true; path: string }
   | { ok: false; cancelled?: true; error?: string };
+// The Scripts tab's list was re-read because the scripts folder setting changed. Same shape as
+// getJsScripts, so the tab can simply adopt it.
+export type JsScriptsReloaded = JsScriptsResult;
 // A save in the external editor, and whether a script currently has an editor session open.
 export type JsScriptEditSource = { id: string; source: string };
 export type JsScriptEditState = { id: string; open: boolean };
@@ -85,6 +97,13 @@ const appAPI = {
   saveSettings: (partial: Partial<AppSettings>): Promise<SettingsSaveResult> =>
     ipcRenderer.invoke("settings:save", partial),
   onOpenSettings: subscribeVoid("open-settings"),
+  // The secret vault behind {{NAME}} in a command and {{NAME:secret}} in a script. Names in, names
+  // out — a value only ever travels towards the main process.
+  getSecrets: (): Promise<SecretsResult> => ipcRenderer.invoke("secrets:list"),
+  setSecret: (name: string, value: string): Promise<SecretsResult> =>
+    ipcRenderer.invoke("secrets:set", { name, value }),
+  removeSecret: (name: string): Promise<SecretsResult> =>
+    ipcRenderer.invoke("secrets:remove", name),
   onThemeChanged: subscribe<AppSettings["theme"]>("theme:changed"),
   getScheduledCommands: (): Promise<ScheduledCommandsResult> =>
     ipcRenderer.invoke("scheduler:list"),
@@ -104,6 +123,9 @@ const appAPI = {
     ipcRenderer.invoke("scheduler:import"),
   onSchedulerUpdate: subscribe<SchedulerSnapshot>("scheduler:update"),
   getJsScripts: (): Promise<JsScriptsResult> => ipcRenderer.invoke("scripts:list"),
+  // The absolute path the scripts folder setting currently resolves to, blank setting included.
+  getJsScriptsDir: (): Promise<string> => ipcRenderer.invoke("scripts:dir"),
+  onJsScriptsReloaded: subscribe<JsScriptsReloaded>("scripts:reloaded"),
   saveJsScripts: (scripts: JsScript[]): Promise<SchedulerSaveResult> =>
     ipcRenderer.invoke("scripts:save", scripts),
   runJsScript: (scriptId: string): Promise<SchedulerRunResult> =>

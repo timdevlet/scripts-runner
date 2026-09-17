@@ -314,7 +314,11 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
                   disabled={scheduler.readOnly}
                 />
               </Field>
-              <p className="hint">Runs through your login shell, so your normal PATH applies.</p>
+              <p className="hint">
+                Runs through your login shell, so your normal PATH applies. A secret from Settings →
+                Secrets can be referenced by name — <code>{"{{DB_API_KEY}}"}</code> — and reaches
+                the command as <code>$DB_API_KEY</code> would, so keep it out of single quotes.
+              </p>
               <Field label="Working directory (optional)" htmlFor="schedCwd">
                 <TextInput
                   id="schedCwd"

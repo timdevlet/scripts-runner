@@ -50,6 +50,7 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
   const store = useScripts();
   const { scripts, snapshot } = store;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [secretNames, setSecretNames] = useState<readonly string[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(logsColumnOpen);
   const [listCollapsed, setListCollapsed] = useState(listColumnCollapsed);
@@ -63,6 +64,16 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
     listColumnCollapsed = next;
     setListCollapsed(next);
   };
+
+  // Which vault entries exist, for the {{NAME:secret}} rows. Read on mount — this view is
+  // remounted every time the tab is opened, so a secret added in Settings is picked up on the way
+  // back here — and never their values, which the renderer is not given.
+  useEffect(() => {
+    void api.getSecrets().then(
+      (result) => setSecretNames(result.names),
+      () => undefined,
+    );
+  }, []);
 
   useEffect(() => {
     if (scripts.length === 0) {
@@ -324,13 +335,15 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                     <code>params.dir</code> inside strings. Name a kind to get a control instead of
                     a text box: <code>{"{{on:bool}}"}</code>, <code>{"{{out:dir}}"}</code>,{" "}
                     <code>{"{{pick:one(a|b)}}"}</code>, <code>{"{{tags:many(a|b)}}"}</code> — every
-                    value still arrives as a string.
+                    value still arrives as a string. <code>{"{{API_KEY:secret}}"}</code> reads a
+                    value from Settings → Secrets instead, which keeps it out of this folder.
                   </>
                 )}
               </p>
               <ScriptParamFields
                 params={params}
                 values={selected.paramValues}
+                secretNames={secretNames}
                 disabled={store.readOnly}
                 onChange={(name, value) =>
                   store.update(selected.id, {
@@ -374,7 +387,9 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                   JavaScript you write yourself, run locally with <code>node</code>. Put holes like{" "}
                   <code>{"{{dir}}"}</code> in the source and they become fields you fill in before
                   running — so a script can be a reusable template. They can also run on a schedule,
-                  and they're stored in <code>js-scripts.json</code>. Add one with “+ Add script”.
+                  and each one is stored as its own folder — <code>script.js</code> beside a{" "}
+                  <code>script.json</code> — in the scripts folder you can set in Settings. Add one
+                  with “+ Add script”.
                 </>
               )}
             </p>

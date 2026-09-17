@@ -5,5 +5,7 @@ dist-electron/
 release/
 scheduled-commands.json
 settings.json
+secrets.json
 .DS_Store
 js-scripts.json
+js-scripts/

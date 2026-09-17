@@ -60,10 +60,14 @@ let clock: number;
 let runner: ReturnType<typeof fakeRunner>;
 let ids: number;
 let scheduler: Scheduler;
+// The secret vault, read per run: a key added after the scheduler was built applies to the next
+// run, which is what lets Settings save one without restarting anything.
+let vault: Record<string, string>;
 
 function build(): Scheduler {
   return createScheduler({
     run: runner.run,
+    secrets: () => vault,
     now: () => clock,
     log: () => {},
     logError: () => {},
@@ -74,6 +78,7 @@ function build(): Scheduler {
 beforeEach(() => {
   clock = START;
   ids = 0;
+  vault = {};
   runner = fakeRunner();
   scheduler = build();
 });
@@ -578,5 +583,74 @@ describe("subscribe and dispose", () => {
     clock += 600_000;
     scheduler.tick();
     expect(runner.runs).toHaveLength(1); // a disposed scheduler ignores ticks
+  });
+});
+
+// A job refers to a secret by name; the value comes from the vault at run time. What the scheduler
+// owns here is the refusal — the runner's own handling (environment, redaction) is in
+// run-js-script.test.ts and domain/secrets.
+describe("secrets", () => {
+  const script = (over: Partial<JsScript> = {}): JsScript => ({
+    id: "s",
+    name: "Fetch",
+    source: "fetch(url)",
+    paramValues: {},
+    cron: "",
+    enabled: false,
+    cwd: "",
+    timeoutSeconds: 300,
+    ...over,
+  });
+
+  it("refuses a command whose secret isn't set, and names it", () => {
+    scheduler.setCommands([command({ command: 'curl -H "key: {{DB_API_KEY}}" https://x' })]);
+
+    const result = scheduler.runNow("a");
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("DB_API_KEY");
+    // Nothing started, so nothing has to be explained in the run log either.
+    expect(runner.runs).toHaveLength(0);
+    expect(scheduler.snapshot().runs).toHaveLength(0);
+  });
+
+  it("refuses a script whose {{name:secret}} hole isn't set", () => {
+    scheduler.setScripts([
+      script({ source: "fetch(url, { key: {{API_KEY:secret}} })", paramValues: {} }),
+    ]);
+
+    const result = scheduler.runNow("s");
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("API_KEY");
+  });
+
+  it("runs once the vault holds the secret, without a restart", () => {
+    scheduler.setCommands([command({ command: "deploy {{TOKEN}}" })]);
+    expect(scheduler.runNow("a").ok).toBe(false);
+
+    vault.TOKEN = "t0ken";
+
+    expect(scheduler.runNow("a").ok).toBe(true);
+    expect(runner.runs).toHaveLength(1);
+  });
+
+  // An empty value is the same as an unset one: the shell would expand it to nothing and the
+  // request would fail somewhere far less obvious than here.
+  it("treats an empty value as unset", () => {
+    vault.TOKEN = "";
+    scheduler.setCommands([command({ command: "deploy {{TOKEN}}" })]);
+
+    expect(scheduler.runNow("a").ok).toBe(false);
+  });
+
+  // A schedule still arms: the gate is the run, so the Scripts tab doesn't have to explain a
+  // schedule that silently refuses to exist.
+  it("still arms the schedule of a job with a missing secret", () => {
+    scheduler.setCommands([
+      command({ command: "deploy {{TOKEN}}", cron: "*/15 * * * *", enabled: true }),
+    ]);
+
+    expect(scheduler.snapshot().nextRunAt.a).toBe(new Date(2024, 4, 10, 8, 15).getTime());
   });
 });

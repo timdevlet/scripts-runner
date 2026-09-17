@@ -8,6 +8,8 @@ import {
   jsScriptLabel,
   normalizeJsScripts,
   parseJsScriptFile,
+  scriptFolderName,
+  scriptFolderNames,
   serializeJsScriptFile,
 } from "../src/domain/js-script.js";
 
@@ -139,5 +141,45 @@ describe("emptyJsScript", () => {
       timeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
     });
     expect(row.source).toContain("{{dir}}");
+  });
+});
+
+describe("scriptFolderName", () => {
+  it("slugs the display name", () => {
+    expect(scriptFolderName({ id: "x", name: "Steam BG to Wide Cover" })).toBe(
+      "steam-bg-to-wide-cover",
+    );
+  });
+
+  it("strips punctuation without leaving a trailing dash", () => {
+    expect(scriptFolderName({ id: "x", name: "Baldur's Gate 3 — art!" })).toBe(
+      "baldur-s-gate-3-art",
+    );
+  });
+
+  it("falls back to the id for a name that would not survive slugging", () => {
+    expect(scriptFolderName({ id: "abcdef1234", name: "" })).toBe("script-abcdef12");
+    expect(scriptFolderName({ id: "abcdef1234", name: "///" })).toBe("script-abcdef12");
+  });
+
+  it("steps around names Windows will not give a folder", () => {
+    expect(scriptFolderName({ id: "abcdef1234", name: "CON" })).toBe("script-abcdef12");
+    expect(scriptFolderName({ id: "abcdef1234", name: "LPT1" })).toBe("script-abcdef12");
+  });
+});
+
+describe("scriptFolderNames", () => {
+  it("numbers duplicates in list order", () => {
+    const names = scriptFolderNames([
+      { id: "a", name: "Backup" },
+      { id: "b", name: "Backup" },
+      { id: "c", name: "Backup" },
+    ]);
+    expect([...names.values()]).toEqual(["backup", "backup-2", "backup-3"]);
+  });
+
+  it("steps around folders that belong to something else", () => {
+    const names = scriptFolderNames([{ id: "a", name: "Backup" }], new Set(["backup"]));
+    expect(names.get("a")).toBe("backup-2");
   });
 });

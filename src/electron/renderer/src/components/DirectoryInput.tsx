@@ -15,12 +15,17 @@ export function DirectoryInput({
   placeholder,
   disabled = false,
   onValueChange,
+  onCommit,
 }: {
   id?: string;
   value: string;
   placeholder?: string;
   disabled?: boolean;
   onValueChange: (value: string) => void;
+  // Called when the user is done typing — on blur, on Enter, and straight after a Browse… pick.
+  // Only needed where acting on a half-typed path would be wrong, as it is for a folder the app
+  // has to go and read; a param field just takes every keystroke.
+  onCommit?: (value: string) => void;
 }) {
   const [picking, setPicking] = useState(false);
 
@@ -30,7 +35,10 @@ export function DirectoryInput({
       // The current value seeds the dialog's starting folder, so re-picking lands where the last
       // choice did instead of at the home directory.
       const result = await api.pickDirectory(value);
-      if (result.ok) onValueChange(result.path);
+      if (result.ok) {
+        onValueChange(result.path);
+        onCommit?.(result.path);
+      }
     } finally {
       setPicking(false);
     }
@@ -44,6 +52,10 @@ export function DirectoryInput({
         placeholder={placeholder}
         disabled={disabled}
         onValueChange={onValueChange}
+        onBlur={(e) => onCommit?.(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onCommit?.(e.currentTarget.value);
+        }}
       />
       <Button size="small" disabled={disabled || picking} onClick={() => void browse()}>
         <FolderIcon />

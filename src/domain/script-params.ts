@@ -10,15 +10,29 @@
 //   {{outDir:dir=/tmp/arts}}              text input + Browse… (native directory picker)
 //   {{pick:one(first|random|largest)}}    dropdown, one choice
 //   {{styles:many(alternate|blurred)}}    checklist, any number of choices
+//   {{DB_API_KEY:secret}}                 no field at all — a vault entry, see domain/secrets.ts
+//
+// Whitespace inside the braces is ignored, so {{ outDir }} and {{outDir}} are the same hole.
 //
 // Values stay strings end to end — js-script.ts persists Record<string, string> and drops
 // anything else — so a bool is "true"/"false" and a multi-select is a comma-joined list. Scripts
 // read them as strings (`params.apply === "true"`), which is also what the untyped holes always
 // did, so adding a kind to an existing hole never changes what the script receives.
+//
+// A :secret hole is the exception, and deliberately so: it has no field, no stored value and no
+// default. It names an entry in the secret vault, and compiles to a process.env read against an
+// environment the runner builds — so the value is never typed into the Scripts tab, never written
+// to script.json, and never pasted into the temp .mjs a run leaves on disk.
+//
+// The other way to reach the vault is from a field: typing {{DB_API_KEY}} as an ordinary param's
+// value stores that reference, and the run resolves it the same way — as a process.env read. It's
+// how an existing script that already takes an `apiKey` param gets a secret without being edited.
 
-export type ScriptParamKind = "text" | "bool" | "dir" | "one" | "many";
+import { compileSecretRefs, extractSecretRefs } from "./secrets.js";
 
-const KINDS = new Set<string>(["text", "bool", "dir", "one", "many"]);
+export type ScriptParamKind = "text" | "bool" | "dir" | "one" | "many" | "secret";
+
+const KINDS = new Set<string>(["text", "bool", "dir", "one", "many", "secret"]);
 
 export interface ScriptParam {
   // The identifier inside {{name}} / params.name — also the form field's label.
@@ -29,15 +43,17 @@ export interface ScriptParam {
   // The choices for "one"/"many", in declaration order. Empty for every other kind.
   options: string[];
   // From {{name=default}}. "" when the hole has no default (or came from a params.name
-  // reference), except for bool, which normalizes to "false".
+  // reference), except for bool, which normalizes to "false", and secret, which never has one.
   defaultValue: string;
 }
 
 // {{dir}}, {{dir=/tmp}}, {{dir:kind}}, {{dir:kind(a|b)}}, {{dir:kind(a|b)=a}}.
 // The option list stops at the first ")" so the default after it is still its own group; the
-// default itself may be anything except a closing brace.
+// default itself may be anything except a closing brace. Whitespace between the braces and the
+// parts is ignored — including around the default, which therefore can't begin or end with a
+// space, the one thing this costs.
 const PLACEHOLDER_RE =
-  /\{\{([A-Za-z_][A-Za-z0-9_]*)(?::([A-Za-z]+)(?:\(([^)}]*)\))?)?(?:=([^}]*))?\}\}/g;
+  /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*([A-Za-z]+)\s*(?:\(([^)}]*)\))?\s*)?(?:=\s*([^}]*?))?\s*\}\}/g;
 const PARAMS_MEMBER_RE = /\bparams\.([A-Za-z_][A-Za-z0-9_]*)/g;
 
 // What a checked toggle writes, and what a script should compare against. The reader is lenient
@@ -84,9 +100,11 @@ function parseOptions(raw: string | undefined): string[] {
 }
 
 // A bool's stored value is always exactly "true" or "false", so the toggle has a definite state
-// and the value a script sees doesn't depend on how the default was spelled.
+// and the value a script sees doesn't depend on how the default was spelled. A secret has no
+// default at all — a value written into the source is exactly what this kind exists to prevent.
 function normalizeDefault(kind: ScriptParamKind, raw: string): string {
   if (kind === "bool") return isParamChecked(raw) ? "true" : "false";
+  if (kind === "secret") return "";
   return raw;
 }
 
@@ -144,13 +162,39 @@ export function resolveParamValues(
   return values;
 }
 
+// The vault entries a source reads through :secret holes, in first-appearance order.
+export function secretParamNames(source: string): string[] {
+  return extractScriptParams(source)
+    .filter((param) => param.kind === "secret")
+    .map((param) => param.name);
+}
+
+// Every vault entry a script needs: its :secret holes plus the {{NAME}} references typed into its
+// param values. What the runner exports into the environment, checks against the vault before a
+// run, and masks in the output.
+export function scriptSecretNames(source: string, stored: Record<string, string>): string[] {
+  const names = new Set(secretParamNames(source));
+  const params = extractScriptParams(source);
+  const values = resolveParamValues(params, stored);
+  for (const param of params) {
+    if (param.kind === "secret") continue;
+    for (const name of extractSecretRefs(values[param.name])) names.add(name);
+  }
+  return [...names];
+}
+
 // Drop values for holes that are no longer in the source, so a renamed/removed {{param}} doesn't
-// leave a ghost key in js-scripts.json.
+// leave a ghost key in script.json — and never keep one for a :secret hole, so a value typed
+// before the hole was annotated leaves the config file at the next save.
 export function pruneParamValues(
   source: string,
   stored: Record<string, string>,
 ): Record<string, string> {
-  const allowed = new Set(extractScriptParams(source).map((param) => param.name));
+  const allowed = new Set(
+    extractScriptParams(source)
+      .filter((param) => param.kind !== "secret")
+      .map((param) => param.name),
+  );
   const pruned: Record<string, string> = {};
   for (const [name, value] of Object.entries(stored)) {
     if (allowed.has(name)) pruned[name] = value;
@@ -166,21 +210,37 @@ export function scriptParamsFilled(source: string, stored: Record<string, string
   const values = resolveParamValues(params, stored);
   return params.every((param) => {
     if (param.kind === "bool" || param.kind === "many") return true;
+    // A secret has no field to fill in, and whether the vault holds it is not something this pure
+    // function can know. The runner checks it instead, and refuses the run by name if it's unset.
+    if (param.kind === "secret") return true;
     return values[param.name].trim() !== "";
   });
 }
 
 // Turn {{dir}} / {{dir=/tmp}} / {{dir:one(a|b)=a}} into params.dir so the prelude's object is the
-// single source of values.
+// single source of values — and {{KEY:secret}} into process.env.KEY, which the prelude never
+// holds. The kind is looked up per name rather than read off each match, so a hole annotated once
+// and repeated bare ({{KEY:secret}} … {{KEY}}) compiles the same way both times.
 export function rewriteScriptSource(source: string): string {
-  return source.replace(cloneRe(PLACEHOLDER_RE), (_match, name: string) => `params.${name}`);
+  const secrets = new Set(secretParamNames(source));
+  return source.replace(cloneRe(PLACEHOLDER_RE), (_match, name: string) =>
+    secrets.has(name) ? `process.env.${name}` : `params.${name}`,
+  );
 }
 
 // A runnable .mjs body: freeze the resolved params, then the rewritten user source. Placeholders
 // become expressions (`params.dir`), not string pastes — values stay JSON-safe.
+//
+// Secrets never land in the frozen object. This body is written to a temp file on disk for the
+// length of the run, so a value inlined here would be a plaintext copy of it. A :secret hole is
+// left out entirely (it compiles to process.env.KEY in the source), and a param value holding a
+// {{KEY}} reference is emitted as that same environment read rather than as a string.
 export function compileJsScript(source: string, stored: Record<string, string>): string {
-  const params = extractScriptParams(source);
+  const params = extractScriptParams(source).filter((param) => param.kind !== "secret");
   const values = resolveParamValues(params, stored);
-  const prelude = `const params = Object.freeze(${JSON.stringify(values)});\n`;
+  const entries = params.map(
+    (param) => `${JSON.stringify(param.name)}:${compileSecretRefs(values[param.name])}`,
+  );
+  const prelude = `const params = Object.freeze({${entries.join(",")}});\n`;
   return `${prelude}${rewriteScriptSource(source)}`;
 }

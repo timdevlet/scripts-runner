@@ -1,6 +1,6 @@
-// User preferences: theme, close-to-tray, launch-at-login. Stored as settings.json in the data
-// dir (see src/paths.ts). Whole-file replace, serialized so overlapping autosaves can't drop
-// each other.
+// User preferences: theme, close-to-tray, launch-at-login, where scripts live. Stored as
+// settings.json in the data dir (see src/paths.ts). Whole-file replace, serialized so overlapping
+// autosaves can't drop each other.
 
 import { join } from "node:path";
 import { normalizeTheme, type ThemePreference } from "../domain/theme.js";
@@ -14,6 +14,10 @@ export interface AppSettings {
   launchAtLogin: boolean;
   // App color theme: "light", "dark", "sand", or "system" (follow the OS setting).
   theme: ThemePreference;
+  // Where the Scripts tab keeps its scripts — one folder per script, holding the source and its
+  // config. "" means <data dir>/scripts; see resolveScriptsDir in src/js-script-store.ts, which
+  // also expands a leading ~ and makes a relative path absolute.
+  scriptsDir: string;
 }
 
 function settingsPath(): string {
@@ -25,6 +29,7 @@ function defaults(): AppSettings {
     minimizeToTrayOnClose: true,
     launchAtLogin: false,
     theme: "dark",
+    scriptsDir: "",
   };
 }
 
@@ -39,6 +44,7 @@ function normalize(raw: unknown): AppSettings {
     launchAtLogin:
       typeof entry.launchAtLogin === "boolean" ? entry.launchAtLogin : base.launchAtLogin,
     theme: normalizeTheme(entry.theme),
+    scriptsDir: typeof entry.scriptsDir === "string" ? entry.scriptsDir.trim() : base.scriptsDir,
   };
 }
 
@@ -60,6 +66,7 @@ export function saveSettings(partial: Partial<AppSettings>): Promise<AppSettings
       next.launchAtLogin = partial.launchAtLogin;
     }
     if (partial.theme !== undefined) next.theme = normalizeTheme(partial.theme);
+    if (typeof partial.scriptsDir === "string") next.scriptsDir = partial.scriptsDir.trim();
     await writeJsonFile(settingsPath(), next);
     return next;
   });

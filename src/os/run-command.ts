@@ -44,6 +44,10 @@ interface RunOptions {
   timeoutMs?: number;
   // Called once per complete output line, with the trailing newline stripped.
   onOutput: (stream: "stdout" | "stderr", text: string) => void;
+  // Extra environment variables for the child, layered over the inherited environment. This is how
+  // secrets reach a run (see src/domain/secrets.ts): the value never appears in the command line,
+  // where `ps` and a shell quoting mistake could both expose it.
+  env?: Record<string, string>;
 }
 
 const isWindows = process.platform === "win32";
@@ -118,12 +122,25 @@ function lineSplitter(emit: (line: string) => void): {
   };
 }
 
+// The inherited environment, with the login shell's PATH and then the job's own variables layered
+// over it. Kept as one function so every run — shell command and JS script alike — builds its
+// environment the same way.
+function childEnv(extra: Record<string, string> | undefined): NodeJS.ProcessEnv {
+  if (!loginShellPath && !extra) return process.env;
+  return {
+    ...process.env,
+    ...(loginShellPath ? { PATH: loginShellPath } : {}),
+    ...extra,
+  };
+}
+
 export function runShellCommand(command: string, options: RunOptions): RunHandle {
   const { file, args } = shellInvocation(command);
   const child = spawn(file, args, {
     cwd: options.cwd?.trim() || undefined,
-    // The resolved profile PATH replaces the app's minimal one; everything else is inherited.
-    env: loginShellPath ? { ...process.env, PATH: loginShellPath } : process.env,
+    // The resolved profile PATH replaces the app's minimal one; everything else is inherited, and
+    // the job's own variables (its secrets) go on top.
+    env: childEnv(options.env),
     // POSIX: own process group, so kill() can take down the script the shell started, not just
     // the shell. Windows has no process groups here — taskkill /T walks the tree instead — and
     // `detached` there would pop a console window.

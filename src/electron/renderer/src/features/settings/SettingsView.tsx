@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { THEME_PREFERENCES } from "../../../../../domain/theme";
 import { Button } from "../../components/Button";
+import { DirectoryInput } from "../../components/DirectoryInput";
 import { Field } from "../../components/Field";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { SettingsGroup } from "../../components/SettingsGroup";
@@ -8,6 +9,7 @@ import { SwitchField } from "../../components/SwitchField";
 import { updateActionLabel, useUpdate } from "../../hooks/useUpdate";
 import { api } from "../../stores/api";
 import type { AppSettings, ThemePreference } from "../../types";
+import { SecretsSection } from "./SecretsSection";
 import "./SettingsView.scss";
 
 const THEME_OPTIONS: readonly { value: ThemePreference; label: string }[] = THEME_PREFERENCES.map(
@@ -26,14 +28,30 @@ export function SettingsView({ initialSettings }: { initialSettings: AppSettings
   // user pressed has to say something back even when the answer is "nothing to do".
   const [checking, setChecking] = useState(false);
   const [checkNote, setCheckNote] = useState("");
+  // Where the scripts folder setting actually resolves to. Worth showing on its own: the field is
+  // blank by default, and nothing else in the UI says which folder that stands for.
+  const [scriptsPath, setScriptsPath] = useState("");
+
+  const readScriptsPath = (): Promise<void> =>
+    // Absent if the scheduler failed to start, in which case the path is the smaller problem.
+    api.getJsScriptsDir().then(setScriptsPath, () => setScriptsPath(""));
 
   useEffect(() => {
     void api.getAppVersion().then(setAppVersion);
+    void readScriptsPath();
   }, []);
 
   const update = (partial: Partial<AppSettings>) => {
     setDraft((current) => ({ ...current, ...partial }));
     void api.saveSettings(partial);
+  };
+
+  // Typed, not toggled: the draft follows every keystroke, but saving waits for blur or Enter —
+  // each save re-reads the folder, and half a path is not a folder.
+  const commitScriptsDir = (scriptsDir: string): void => {
+    if (scriptsDir === draft.scriptsDir && scriptsPath) return;
+    setDraft((current) => ({ ...current, scriptsDir }));
+    void api.saveSettings({ scriptsDir }).then(readScriptsPath);
   };
 
   const onCheck = async (): Promise<void> => {
@@ -83,6 +101,24 @@ export function SettingsView({ initialSettings }: { initialSettings: AppSettings
           keeps them armed in the background.
         </p>
       </SettingsGroup>
+      <SettingsGroup title="Scripts">
+        <Field label="Scripts folder" htmlFor="scriptsDir">
+          <DirectoryInput
+            id="scriptsDir"
+            value={draft.scriptsDir}
+            placeholder="Default location"
+            onValueChange={(scriptsDir) => setDraft((current) => ({ ...current, scriptsDir }))}
+            onCommit={commitScriptsDir}
+          />
+        </Field>
+        <p className="hint">
+          One folder per script, each holding <code>script.js</code> — the source, editable in any
+          editor — and <code>script.json</code> for its name, parameters and schedule. Leave the
+          field blank to use the default location.
+        </p>
+        {scriptsPath && <p className="hint">Currently reading {scriptsPath}</p>}
+      </SettingsGroup>
+      <SecretsSection />
       <SettingsGroup title="Updates">
         <div className="update-row">
           <span>
