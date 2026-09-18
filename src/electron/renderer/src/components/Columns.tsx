@@ -15,10 +15,17 @@ import "./Columns.scss";
 // How a pane's width is adjusted by dragging the divider next to it. `cssVar` is the custom property
 // the caller's grid-template-columns reads its width from — the stylesheet keeps owning the default
 // (and what a narrow window does instead), a drag only overrides it.
+//
+// The limits are pixels (`min`/`max`), or shares of the width the pane and its flexible neighbour
+// have between them (`minShare`/`maxShare`, 0–1) — the run log is allowed anywhere from a fifth to
+// four fifths of the space it splits with the configuration pane, whatever the window's size. A
+// share, when given, replaces the pixel limit on that side.
 export interface ColumnResize {
   cssVar: string;
   min?: number;
   max?: number;
+  minShare?: number;
+  maxShare?: number;
 }
 
 // Widths the user has dragged, kept for as long as the app runs and keyed by custom property, since
@@ -63,19 +70,30 @@ function Resizer({
   column: number;
   label: string;
 }) {
-  // Which pane this divider sizes is a matter of where it sits, so the DOM can say — no refs.
-  const pane = (divider: HTMLElement): HTMLElement | null => {
-    const sibling = grow === 1 ? divider.previousElementSibling : divider.nextElementSibling;
-    return sibling instanceof HTMLElement ? sibling : null;
+  // Which pane this divider sizes is a matter of where it sits, so the DOM can say — no refs. The
+  // pane on the divider's other side is the flexible one that gives up what this one takes.
+  const sibling = (divider: HTMLElement, side: 1 | -1): HTMLElement | null => {
+    const el = side === 1 ? divider.previousElementSibling : divider.nextElementSibling;
+    return el instanceof HTMLElement ? el : null;
   };
+  const pane = (divider: HTMLElement) => sibling(divider, grow);
+  const neighbour = (divider: HTMLElement) => sibling(divider, grow === 1 ? -1 : 1);
 
   // Written straight to the grid element: a drag is a CSS variable change and a relayout, with no
   // React render in the loop. The next render re-applies the same value from draggedWidths.
   const resize = (divider: HTMLElement, width: number) => {
     const grid = divider.closest(".columns");
     if (!(grid instanceof HTMLElement)) return;
-    const max = Math.min(spec.max ?? MAX_WIDTH, grid.clientWidth * MAX_SHARE);
-    const next = Math.round(clamp(width, spec.min ?? MIN_WIDTH, max));
+    // The width the two panes split. Constant through a drag: what one takes the other gives up.
+    const pair =
+      (pane(divider)?.getBoundingClientRect().width ?? 0) +
+      (neighbour(divider)?.getBoundingClientRect().width ?? 0);
+    const min = spec.minShare != null ? pair * spec.minShare : (spec.min ?? MIN_WIDTH);
+    const max =
+      spec.maxShare != null
+        ? pair * spec.maxShare
+        : Math.min(spec.max ?? MAX_WIDTH, grid.clientWidth * MAX_SHARE);
+    const next = Math.round(clamp(width, min, max));
     grid.style.setProperty(spec.cssVar, `${next}px`);
     draggedWidths.set(spec.cssVar, next);
   };

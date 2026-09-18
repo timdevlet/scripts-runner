@@ -219,34 +219,31 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
     record.totalLines++;
   }
 
-  // Start a job. The only path to a run — both tick() and runNow() go through here.
-  function begin(job: RunnableJob, trigger: RunTrigger): RunResult {
-    if (job.kind === "shell" && !job.command.trim()) {
-      return { ok: false, error: "This command has nothing to run." };
-    }
-    if (job.kind === "js" && !job.source.trim()) {
-      return { ok: false, error: "This script has nothing to run." };
-    }
+  // Why a job can't start right now, or null when it can. Checked before anything is recorded, so
+  // a refused run leaves nothing behind but the reason — which the caller has to surface itself.
+  function refusal(job: RunnableJob): string | null {
+    if (job.kind === "shell" && !job.command.trim()) return "This command has nothing to run.";
+    if (job.kind === "js" && !job.source.trim()) return "This script has nothing to run.";
     if (live.has(job.id)) {
-      return {
-        ok: false,
-        error:
-          job.kind === "shell"
-            ? "This command is already running."
-            : "This script is already running.",
-      };
+      return job.kind === "shell"
+        ? "This command is already running."
+        : "This script is already running.";
     }
     // Refused rather than started: an unset variable expands to nothing, and a request sent with
     // an empty API key fails somewhere far less obvious than here.
     const missing = missingSecrets(vault(), jobSecretNames(job));
     if (missing.length > 0) {
-      return {
-        ok: false,
-        error: `${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not set — add ${
-          missing.length === 1 ? "it" : "them"
-        } under Settings → Secrets.`,
-      };
+      return `${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not set — add ${
+        missing.length === 1 ? "it" : "them"
+      } under Settings → Secrets.`;
     }
+    return null;
+  }
+
+  // Start a job. The only path to a run — both tick() and runNow() go through here.
+  function begin(job: RunnableJob, trigger: RunTrigger): RunResult {
+    const refused = refusal(job);
+    if (refused) return { ok: false, error: refused };
 
     const label = jobLabel(job);
     const noun = jobNoun(job);
@@ -273,13 +270,9 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
       const params = extractScriptParams(job.source);
       const values = resolveParamValues(params, job.paramValues);
       for (const param of params) {
-        // A secret has no stored value to print, and printing the one it resolves to is the whole
-        // thing this feature exists to avoid. The name is the useful part anyway.
-        const shown =
-          param.kind === "secret"
-            ? "(from Settings → Secrets)"
-            : JSON.stringify(values[param.name]);
-        append(record, "system", `(${param.name} = ${shown})`);
+        // A value holding a {{NAME}} reference prints as the reference: the value it resolves to
+        // is what the vault exists to keep out of the run log.
+        append(record, "system", `(${param.name} = ${JSON.stringify(values[param.name])})`);
       }
     }
     if (job.cwd.trim()) append(record, "system", `(in ${job.cwd.trim()})`);
@@ -365,6 +358,13 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
         write(`${jobNoun(job)} "${jobLabel(job)}" is still running — skipping this run.`);
         continue;
       }
+      // A run refused here (a secret that isn't set) leaves no run record, so the log is the only
+      // place it can show. Without this line an armed schedule would simply appear never to fire.
+      const refused = refusal(job);
+      if (refused) {
+        writeError(`${jobNoun(job)} "${jobLabel(job)}" was not started: ${refused}`);
+        continue;
+      }
       begin(job, "schedule");
     }
     emit();
@@ -401,6 +401,7 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
     if (disposed) return;
     const delay = 60_000 - (now() % 60_000) + 250;
     timer = setTimeout(() => {
+      timer = null;
       tick();
       scheduleTick();
     }, delay);
@@ -420,7 +421,10 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    start: scheduleTick,
+    // Idempotent: a second start() must not put a second ticker on the clock.
+    start() {
+      if (!timer) scheduleTick();
+    },
     dispose() {
       disposed = true;
       if (timer) clearTimeout(timer);
@@ -436,8 +440,8 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
   };
 }
 
-// The vault entries a job reads: {{NAME:secret}} holes and {{NAME}} field values for a script,
-// {{NAME}} references for a shell command.
+// The vault entries a job reads: {{NAME}} references in a script's field values, or in a shell
+// command.
 function jobSecretNames(job: RunnableJob): string[] {
   return job.kind === "js"
     ? scriptSecretNames(job.source, job.paramValues)

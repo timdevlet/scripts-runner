@@ -48,6 +48,7 @@ export function TimeoutField({
         />
         <LabeledCheckbox
           checked={unlimited}
+          disabled={disabled}
           onChange={(checked) => onChange(checked ? UNLIMITED_TIMEOUT : lastFinite)}
         >
           Unlimited

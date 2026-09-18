@@ -34,12 +34,13 @@ API keys and tokens live in their own file, so nothing you might commit, export 
 
 ```
 Commands tab   curl -H "key: {{DB_API_KEY}}" https://api.example.com
-Scripts tab    const res = await fetch(url, { headers: { key: {{DB_API_KEY:secret}} } })
+Scripts tab    const res = await fetch(url, { headers: { key: {{apiKey}} } })
+               …and type {{DB_API_KEY}} into the apiKey field
 ```
 
-The value is never substituted into the command or the script. It is passed to the run through its environment — `{{DB_API_KEY}}` expands the way `$DB_API_KEY` does (`%DB_API_KEY%` on Windows), and `{{DB_API_KEY:secret}}` compiles to `process.env.DB_API_KEY` — so keep a reference out of single quotes, where a shell would not expand it. A run only ever receives the secrets it names, run output has their values masked before it reaches the log, and a run whose secret is not set is refused by name rather than started with an empty value.
+The value is never substituted into the command or the script. It is passed to the run through its environment — in a command `{{DB_API_KEY}}` expands the way `$DB_API_KEY` does (`%DB_API_KEY%` on Windows), and in a script's parameter value it compiles to `process.env.DB_API_KEY` — so keep a reference out of single quotes, where a shell would not expand it. A field holding a reference gets a key button beside it that shows what the reference currently stands for. A run only ever receives the secrets it names, run output has their values masked before it reaches the log, and a run whose secret is not set is refused by name rather than started with an empty value.
 
-Secrets are stored in `secrets.json` next to the other app data, written so that only your account can read it. That is the whole of the protection: it is a config file, like a `.netrc` or an `.env`, not an encrypted store — anything running as you can read it. What it buys you is that your scripts folder holds no keys, so it is safe to put in git.
+Secrets are stored in `secrets.json` next to the other app data, written so that only your account can read it, and Settings → Secrets shows and edits the values in place. That is the whole of the protection: it is a config file, like a `.netrc` or an `.env`, not an encrypted store — anything running as you can read it. What it buys you is that your scripts folder holds no keys, so it is safe to put in git.
 
 ## Scripts
 

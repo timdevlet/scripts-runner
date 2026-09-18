@@ -64,17 +64,11 @@ export type TextMatch = { start: number; end: number };
 // Literal, case-insensitive, non-overlapping — the Scripts editor's "find in text".
 export function findMatches(source: string, query: string): TextMatch[] {
   if (!query) return [];
-  const hay = source.toLowerCase();
-  const needle = query.toLowerCase();
-  const matches: TextMatch[] = [];
-  let from = 0;
-  while (from < hay.length) {
-    const i = hay.indexOf(needle, from);
-    if (i === -1) break;
-    matches.push({ start: i, end: i + needle.length });
-    from = i + needle.length;
-  }
-  return matches;
+  // A case-insensitive regex over the source itself, not indexOf over a lowercased copy: lowering
+  // can change a string's length ("İ" becomes two code units), which would shift every offset —
+  // and so every highlight and cursor placement — after that character.
+  const literal = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  return [...source.matchAll(literal)].map((m) => ({ start: m.index, end: m.index + m[0].length }));
 }
 
 // Must match `line-height` / `padding` on `.code-editor-input` in CodeEditor.scss.

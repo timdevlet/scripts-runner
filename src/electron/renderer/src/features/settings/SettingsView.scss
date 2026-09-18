@@ -22,9 +22,30 @@
 
   /* Centered column: the groups keep a readable width, and the leftover space is split evenly
      rather than all piling up on the right of a wide window. */
-  .settings-group {
+  .settings-group,
+  .settings-section {
     max-width: 640px;
     margin-inline: auto;
+  }
+}
+
+/* The two halves of the page — the scripts' own settings, then the app's — each under a small
+   caption, with a rule between them so the break reads as a break and not as one more gap. */
+.settings-section {
+  > h2 {
+    margin: 0 0 10px;
+    padding: 0 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  + .settings-section {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
   }
 }
 

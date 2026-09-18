@@ -614,9 +614,9 @@ describe("secrets", () => {
     expect(scheduler.snapshot().runs).toHaveLength(0);
   });
 
-  it("refuses a script whose {{name:secret}} hole isn't set", () => {
+  it("refuses a script whose field refers to a secret that isn't set", () => {
     scheduler.setScripts([
-      script({ source: "fetch(url, { key: {{API_KEY:secret}} })", paramValues: {} }),
+      script({ source: "fetch(url, { key: {{key}} })", paramValues: { key: "{{API_KEY}}" } }),
     ]);
 
     const result = scheduler.runNow("s");
@@ -652,5 +652,30 @@ describe("secrets", () => {
     ]);
 
     expect(scheduler.snapshot().nextRunAt.a).toBe(new Date(2024, 4, 10, 8, 15).getTime());
+  });
+
+  // …and when that schedule comes due, the refusal has to land somewhere. There is no run record
+  // for a run that never started, so the log is the one place the user can learn why.
+  it("logs a scheduled run it refused, and re-arms the schedule", () => {
+    const errors: string[] = [];
+    scheduler = createScheduler({
+      run: runner.run,
+      secrets: () => vault,
+      now: () => clock,
+      log: () => {},
+      logError: (msg) => errors.push(msg),
+      newId: () => `run-${++ids}`,
+    });
+    scheduler.setCommands([
+      command({ command: "deploy {{TOKEN}}", cron: "*/15 * * * *", enabled: true }),
+    ]);
+
+    clock = new Date(2024, 4, 10, 8, 15).getTime();
+    scheduler.tick();
+
+    expect(runner.runs).toHaveLength(0);
+    expect(scheduler.snapshot().runs).toHaveLength(0);
+    expect(errors).toEqual([expect.stringContaining("TOKEN is not set")]);
+    expect(scheduler.snapshot().nextRunAt.a).toBe(new Date(2024, 4, 10, 8, 30).getTime());
   });
 });

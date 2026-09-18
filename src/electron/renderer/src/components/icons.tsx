@@ -277,3 +277,18 @@ export function CheckIcon() {
     </svg>
   );
 }
+
+// Key — reveals the vault values a field's {{NAME}} references stand for (SecretPeek).
+export function KeyIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="5.5" cy="10.5" r="3" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M7.6 8.4l5.9-5.9M11 5l1.75 1.75M9 7l1.75 1.75"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}

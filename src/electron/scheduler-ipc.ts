@@ -7,7 +7,15 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
-import { type BrowserWindow, dialog, ipcMain } from "electron";
+import {
+  type BrowserWindow,
+  dialog,
+  ipcMain,
+  type OpenDialogOptions,
+  type OpenDialogReturnValue,
+  type SaveDialogOptions,
+  type SaveDialogReturnValue,
+} from "electron";
 import { cronError, describeCron, nextRuns } from "../domain/cron.js";
 import { errorText } from "../domain/errors.js";
 import {
@@ -176,7 +184,7 @@ export async function installSchedulerIpc(
   });
 
   ipcMain.handle("scheduler:run", (_e, commandId: unknown) =>
-    typeof commandId === "string"
+    typeof commandId === "string" && scheduler.commands().some((c) => c.id === commandId)
       ? scheduler.runNow(commandId)
       : { ok: false as const, error: "Unknown command." },
   );
@@ -204,91 +212,116 @@ export async function installSchedulerIpc(
     };
   });
 
-  // Native directory picker behind the "dir" script params and the working-directory fields.
-  // Lives here with the other dialogs for the same reason: the renderer can't open one itself,
-  // and the window-optional call below is the tray-app detail that keeps it working when the
-  // window is closed. The current value only seeds defaultPath — the chosen path is the user's,
-  // so nothing the renderer sends can reach the filesystem on its own.
-  ipcMain.handle("dialog:pick-directory", async (_event, current: unknown) => {
+  // Dialogs get the window when there is one — that makes them a sheet on macOS. Without one (the
+  // window is closed to the tray) they open standalone rather than not at all.
+  const openDialog = (options: OpenDialogOptions): Promise<OpenDialogReturnValue> => {
     const win = getWindow();
-    const options = {
+    return win && !win.isDestroyed()
+      ? dialog.showOpenDialog(win, options)
+      : dialog.showOpenDialog(options);
+  };
+  const saveDialog = (options: SaveDialogOptions): Promise<SaveDialogReturnValue> => {
+    const win = getWindow();
+    return win && !win.isDestroyed()
+      ? dialog.showSaveDialog(win, options)
+      : dialog.showSaveDialog(options);
+  };
+
+  // Native directory picker behind the "dir" script params and the working-directory fields.
+  // Lives here with the other dialogs for the same reason: the renderer can't open one itself.
+  // The current value only seeds defaultPath — the chosen path is the user's, so nothing the
+  // renderer sends can reach the filesystem on its own.
+  ipcMain.handle("dialog:pick-directory", async (_event, current: unknown) => {
+    const result = await openDialog({
       title: "Choose a folder",
-      properties: ["openDirectory" as const, "createDirectory" as const],
+      properties: ["openDirectory", "createDirectory"],
       ...(typeof current === "string" && current.trim() !== ""
         ? { defaultPath: current.trim() }
         : {}),
-    };
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options);
+    });
     const dir = result.filePaths[0];
     if (result.canceled || !dir) return { ok: false as const, cancelled: true as const };
     return { ok: true as const, path: dir };
   });
 
-  ipcMain.handle("scheduler:export", async () => {
-    const win = getWindow();
-    const options = {
-      title: "Export commands",
-      defaultPath: "scheduled-commands.json",
-      filters: JSON_FILTERS,
-    };
-    // Passing the window makes the dialog a sheet on macOS; without one (window closed to the
-    // tray) it opens standalone rather than not at all.
-    const result = win
-      ? await dialog.showSaveDialog(win, options)
-      : await dialog.showSaveDialog(options);
-    if (result.canceled || !result.filePath)
-      return { ok: false as const, cancelled: true as const };
-    try {
-      await writeFile(result.filePath, serializeScheduleFile(scheduler.commands()), "utf8");
-      log(`Exported ${scheduler.commands().length} command(s) to "${result.filePath}".`);
-      return { ok: true as const, path: basename(result.filePath) };
-    } catch (err) {
-      return { ok: false as const, error: errorText(err) };
-    }
+  // Export / import for one of the two lists. The Commands and Scripts tabs share the dialogs and
+  // the import rules: the parsed entries go back to the renderer rather than to disk, so the tab
+  // merges them into its draft (and autosaves) like any other edit; every entry comes back
+  // DISABLED, because an imported file is a list of commands from somewhere else and nothing
+  // should start running before it's been read; and every id is regenerated so an import can't
+  // overwrite an existing entry.
+  function installTransfer<T extends { id: string; enabled: boolean }>(spec: {
+    // IPC channel prefix: "<channel>:export" and "<channel>:import".
+    channel: string;
+    // The key the import result carries the entries under — what the renderer reads.
+    key: "commands" | "scripts";
+    // Singular, for the log line.
+    noun: string;
+    defaultPath: string;
+    current: () => T[];
+    serialize: (items: T[]) => string;
+    parse: (value: unknown) => T[];
+  }): void {
+    ipcMain.handle(`${spec.channel}:export`, async () => {
+      const result = await saveDialog({
+        title: `Export ${spec.key}`,
+        defaultPath: spec.defaultPath,
+        filters: JSON_FILTERS,
+      });
+      if (result.canceled || !result.filePath) {
+        return { ok: false as const, cancelled: true as const };
+      }
+      try {
+        const items = spec.current();
+        await writeFile(result.filePath, spec.serialize(items), "utf8");
+        log(`Exported ${items.length} ${spec.noun}(s) to "${result.filePath}".`);
+        return { ok: true as const, path: basename(result.filePath) };
+      } catch (err) {
+        return { ok: false as const, error: errorText(err) };
+      }
+    });
+
+    ipcMain.handle(`${spec.channel}:import`, async () => {
+      const result = await openDialog({
+        title: `Import ${spec.key}`,
+        properties: ["openFile"],
+        filters: JSON_FILTERS,
+      });
+      const file = result.filePaths[0];
+      if (result.canceled || !file) return { ok: false as const, cancelled: true as const };
+      try {
+        const items: T[] = spec.parse(JSON.parse(await readFile(file, "utf8"))).map((item) => ({
+          ...item,
+          id: globalThis.crypto.randomUUID(),
+          enabled: false,
+        }));
+        log(
+          `Imported ${items.length} ${spec.noun}(s) from "${file}" — disabled until you enable them.`,
+        );
+        return { ok: true as const, [spec.key]: items };
+      } catch (err) {
+        return { ok: false as const, error: `Could not read that file: ${errorText(err)}` };
+      }
+    });
+  }
+
+  installTransfer<ScheduledCommand>({
+    channel: "scheduler",
+    key: "commands",
+    noun: "command",
+    defaultPath: "scheduled-commands.json",
+    current: () => scheduler.commands(),
+    serialize: serializeScheduleFile,
+    parse: parseScheduleFile,
   });
 
-  // Import hands the parsed commands back to the renderer rather than writing them itself, so the
-  // tab can merge them into its draft (and autosave) like any other edit. Two safety measures,
-  // because an imported file is a list of shell commands from somewhere else: every entry comes
-  // back DISABLED so nothing starts running before it's been read, and every id is regenerated so
-  // an import can't overwrite an existing command.
-  ipcMain.handle("scheduler:import", async () => {
-    const win = getWindow();
-    const options = {
-      title: "Import commands",
-      properties: ["openFile" as const],
-      filters: JSON_FILTERS,
-    };
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options);
-    const file = result.filePaths[0];
-    if (result.canceled || !file) return { ok: false as const, cancelled: true as const };
-    try {
-      const parsed = parseScheduleFile(JSON.parse(await readFile(file, "utf8")));
-      const commands: ScheduledCommand[] = parsed.map((cmd) => ({
-        ...cmd,
-        id: globalThis.crypto.randomUUID(),
-        enabled: false,
-      }));
-      log(
-        `Imported ${commands.length} command(s) from "${file}" — disabled until you enable them.`,
-      );
-      return { ok: true as const, commands };
-    } catch (err) {
-      return { ok: false as const, error: `Could not read that file: ${errorText(err)}` };
-    }
-  });
-
-  // Names only, never values: the vault's whole point is that the values stay in one file in one
-  // process, and a renderer that can't read them can't leak them to a devtools console or an
-  // errant render. The path comes along for the Settings hint.
+  // The whole vault, values included: Settings shows them in place, and a field holding a
+  // {{NAME}} reference can reveal what it stands for. The path comes along for the Settings hint.
   const secretsResult = () => ({
     ok: !secretsError,
     error: secretsError,
     names: Object.keys(secrets).sort((a, b) => a.localeCompare(b)),
+    values: { ...secrets },
     path: secretsPath(),
   });
 
@@ -344,12 +377,25 @@ export async function installSchedulerIpc(
   // from the renderer, which sees only the empty string that stands for it.
   ipcMain.handle("scripts:dir", () => scriptsDir);
 
-  ipcMain.handle("scripts:list", () => ({
+  // "Edit in VS Code": its own module, but it reads scripts out of this scheduler and is torn
+  // down with the rest of the scripts IPC.
+  const scriptEdit = installScriptEditIpc({
+    getWindow,
+    getScript: (id) => scheduler.scripts().find((s) => s.id === id) ?? null,
+  });
+
+  // What the Scripts tab needs to draw itself — the initial list and a reload send the same thing.
+  const scriptsResult = () => ({
     ok: !scriptsLoadError,
     error: scriptsLoadError,
     scripts: scheduler.scripts(),
     snapshot: scheduler.snapshot(),
-  }));
+    // Which scripts are open in VS Code. The tab is remounted on every visit and would otherwise
+    // forget the sessions it started; the main process is what actually holds them.
+    editing: scriptEdit.openIds(),
+  });
+
+  ipcMain.handle("scripts:list", () => scriptsResult());
 
   ipcMain.handle("scripts:save", async (_e, payload: unknown) => {
     if (scriptsLoadError) return { ok: false as const, error: scriptsLoadError };
@@ -374,58 +420,14 @@ export async function installSchedulerIpc(
     ok: typeof scriptId === "string" ? scheduler.stop(scriptId) : false,
   }));
 
-  ipcMain.handle("scripts:export", async () => {
-    const win = getWindow();
-    const options = {
-      title: "Export scripts",
-      defaultPath: "js-scripts.json",
-      filters: JSON_FILTERS,
-    };
-    const result = win
-      ? await dialog.showSaveDialog(win, options)
-      : await dialog.showSaveDialog(options);
-    if (result.canceled || !result.filePath)
-      return { ok: false as const, cancelled: true as const };
-    try {
-      await writeFile(result.filePath, serializeJsScriptFile(scheduler.scripts()), "utf8");
-      log(`Exported ${scheduler.scripts().length} script(s) to "${result.filePath}".`);
-      return { ok: true as const, path: basename(result.filePath) };
-    } catch (err) {
-      return { ok: false as const, error: errorText(err) };
-    }
-  });
-
-  ipcMain.handle("scripts:import", async () => {
-    const win = getWindow();
-    const options = {
-      title: "Import scripts",
-      properties: ["openFile" as const],
-      filters: JSON_FILTERS,
-    };
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options);
-    const file = result.filePaths[0];
-    if (result.canceled || !file) return { ok: false as const, cancelled: true as const };
-    try {
-      const parsed = parseJsScriptFile(JSON.parse(await readFile(file, "utf8")));
-      const scripts: JsScript[] = parsed.map((row) => ({
-        ...row,
-        id: globalThis.crypto.randomUUID(),
-        enabled: false,
-      }));
-      log(`Imported ${scripts.length} script(s) from "${file}" — disabled until you enable them.`);
-      return { ok: true as const, scripts };
-    } catch (err) {
-      return { ok: false as const, error: `Could not read that file: ${errorText(err)}` };
-    }
-  });
-
-  // "Edit in VS Code": its own module, but it reads scripts out of this scheduler and is torn
-  // down with the rest of the scripts IPC.
-  const scriptEdit = installScriptEditIpc({
-    getWindow,
-    getScript: (id) => scheduler.scripts().find((s) => s.id === id) ?? null,
+  installTransfer<JsScript>({
+    channel: "scripts",
+    key: "scripts",
+    noun: "script",
+    defaultPath: "js-scripts.json",
+    current: () => scheduler.scripts(),
+    serialize: serializeJsScriptFile,
+    parse: parseJsScriptFile,
   });
 
   return {
@@ -434,14 +436,7 @@ export async function installSchedulerIpc(
       log(`Scripts folder is now "${scriptsDir}".`);
       await readScripts();
       const win = getWindow();
-      if (win && !win.isDestroyed()) {
-        win.webContents.send("scripts:reloaded", {
-          ok: !scriptsLoadError,
-          error: scriptsLoadError,
-          scripts: scheduler.scripts(),
-          snapshot: scheduler.snapshot(),
-        });
-      }
+      if (win && !win.isDestroyed()) win.webContents.send("scripts:reloaded", scriptsResult());
     },
 
     dispose() {

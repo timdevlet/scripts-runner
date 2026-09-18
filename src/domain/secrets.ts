@@ -5,7 +5,7 @@
 // A job never holds a secret's value, only its name:
 //
 //   Commands tab   curl -H "key: {{STEAM_GRID_API_KEY}}" https://…
-//   Scripts tab    const key = {{STEAM_GRID_API_KEY:secret}}
+//   Scripts tab    {{STEAM_GRID_API_KEY}} typed into a param's field
 //
 // Both are resolved through the child process's environment rather than by pasting the value in
 // (see rewriteCommandSecrets, and compileJsScript in script-params.ts). That keeps the value off
@@ -13,7 +13,7 @@
 // a script run leaves on disk.
 
 // Vault entries are environment variable names: what the shell and process.env can both address.
-// Same shape as a script param, so a {{name:secret}} hole reads like every other hole.
+// Same shape as a script param, so a {{NAME}} reference reads like a hole.
 const SECRET_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // A bare {{NAME}} reference — in a shell command, or in the value typed into a script's parameter
@@ -29,8 +29,8 @@ export const SECRETS_FILE_VERSION = 1;
 
 export interface SecretsFile {
   version: number;
-  // name → value. Values only ever exist in the main process: the renderer is told which names
-  // are set, never what they hold.
+  // name → value. The main process owns the file; the renderer is handed a copy so Settings can
+  // show and edit the values in place.
   secrets: Record<string, string>;
 }
 

@@ -1,20 +1,10 @@
+import { scheduledCommandLabel } from "../../../../../domain/scheduled";
 import { ClockIcon } from "../../components/icons";
 import { RunButton } from "../../components/RunButton";
 import { Truncate } from "../../components/Truncate";
 import { formatCountdown, formatWhen } from "../../lib/datetime";
 import type { ScheduledCommand, SchedulerSnapshot } from "../../types";
 import "./ScheduledCommandList.scss";
-
-// Mirrors scheduledCommandLabel in src/domain/scheduled.ts — duplicated so the sandboxed renderer
-// keeps importing only types from the node-side modules (the same trade the Settings command list
-// makes for its own label helpers).
-export function commandLabel(cmd: ScheduledCommand): string {
-  const name = cmd.name.trim();
-  if (name) return name;
-  const command = cmd.command.trim();
-  if (!command) return "Untitled command";
-  return command.length > 40 ? `${command.slice(0, 40)}…` : command;
-}
 
 // The one-line schedule summary under a row's name. Everything it needs is already in the
 // snapshot the main process pushes, so no cron parsing happens in the renderer.
@@ -69,7 +59,7 @@ export function ScheduledCommandList({
               <span className="sched-row-text">
                 <span className="sched-row-label">
                   {scheduled && <ClockIcon size={13} />}
-                  <Truncate text={commandLabel(cmd)} />
+                  <Truncate text={scheduledCommandLabel(cmd)} />
                 </span>
                 <small className="sched-row-subtitle">
                   {scheduleSubtitle(cmd, snapshot.nextRunAt[cmd.id])}
@@ -82,8 +72,8 @@ export function ScheduledCommandList({
               running={running.has(cmd.id)}
               pending={pendingId === cmd.id}
               disabled={!cmd.command.trim()}
-              label={`Run "${commandLabel(cmd)}" now`}
-              runningLabel={`"${commandLabel(cmd)}" is running`}
+              label={`Run "${scheduledCommandLabel(cmd)}" now`}
+              runningLabel={`"${scheduledCommandLabel(cmd)}" is running`}
               onRun={() => onRun(cmd.id)}
             />
           </div>

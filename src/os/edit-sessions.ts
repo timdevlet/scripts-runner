@@ -52,6 +52,8 @@ export interface EditSessions {
   // it) alone.
   open(id: string, fileName: string, source: string): OpenResult;
   isOpen(id: string): boolean;
+  // Every id with a session open right now.
+  openIds(): string[];
   // End every session: stop watching, drop the temp files. Nothing is read back.
   dispose(): void;
 }
@@ -118,6 +120,7 @@ export function createEditSessions(deps: EditSessionsDeps): EditSessions {
 
   return {
     isOpen: (id) => sessions.has(id),
+    openIds: () => [...sessions.keys()],
 
     open(id, fileName, source) {
       const existing = sessions.get(id);

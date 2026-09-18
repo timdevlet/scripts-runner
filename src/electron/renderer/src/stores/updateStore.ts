@@ -10,7 +10,7 @@ type UpdateCheckResult = Awaited<ReturnType<typeof api.checkForUpdate>>;
 
 export function createUpdateStore(deps: {
   check: () => Promise<UpdateCheckResult>;
-  onState: (cb: (state: UpdateState) => void) => () => void;
+  onState: (cb: (state: UpdateState | null) => void) => () => void;
 }) {
   const store = createStore<UpdateState | null>(null);
   // Coalesces the concurrent fetches StrictMode's doubled effect would otherwise make.

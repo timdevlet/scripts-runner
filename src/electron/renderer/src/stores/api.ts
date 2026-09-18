@@ -5,23 +5,9 @@
 
 import type { AppAPI } from "../../../preload.js";
 
-export type {
-  AppAPI,
-  CronPreview,
-  DirectoryPickResult,
-  JsScriptEditSource,
-  JsScriptEditState,
-  JsScriptsImportResult,
-  JsScriptsReloaded,
-  JsScriptsResult,
-  ScheduledCommandsResult,
-  SchedulerExportResult,
-  SchedulerImportResult,
-  SchedulerRunResult,
-  SchedulerSaveResult,
-  SecretsResult,
-  SettingsSaveResult,
-} from "../../../preload.js";
+// The bridge's result shapes a component names explicitly. Most are only ever inferred from the
+// call, so only the ones that are actually written out are re-exported here.
+export type { CronPreview, SecretsResult } from "../../../preload.js";
 
 export const api: AppAPI = {
   onLog: (cb) => window.appAPI.onLog(cb),

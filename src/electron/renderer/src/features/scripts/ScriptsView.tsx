@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { emptyJsScript } from "../../../../../domain/js-script";
+import { emptyJsScript, jsScriptLabel } from "../../../../../domain/js-script";
 import { extractScriptParams } from "../../../../../domain/script-params";
 import { Button } from "../../components/Button";
 import { CodeEditor } from "../../components/CodeEditor";
@@ -25,12 +25,13 @@ import { TextInput } from "../../components/TextInput";
 import { useScripts } from "../../hooks/useScripts";
 import type { ToastKind } from "../../lib/toasts";
 import { api } from "../../stores/api";
+import { navigate, useRoute } from "../../stores/route";
 import type { JsScript } from "../../types";
 import { CronField } from "../scheduler/CronField";
 import { RunHistory } from "../scheduler/RunHistory";
 import { TimeoutField } from "../scheduler/TimeoutField";
 import "../scheduler/CommandsView.scss";
-import { ScriptList, scriptLabel } from "./ScriptList";
+import { ScriptList } from "./ScriptList";
 import { ScriptParamFields } from "./ScriptParamFields";
 import "./ScriptsView.scss";
 
@@ -38,10 +39,10 @@ function blankScript(): JsScript {
   return emptyJsScript(crypto.randomUUID());
 }
 
-let logsColumnOpen = false;
-// Whether the script list is zipped shut to its rail. Module scope for the same reason as the logs
-// toggle above: the view remounts on every visit to the tab, and re-collapsing it each time would
-// undo a choice the user made about how much room the editor gets.
+// Whether the script list is zipped shut to its rail. Module scope, not component state: the view
+// remounts on every visit to the tab, and re-collapsing it each time would undo a choice the user
+// made about how much room the editor gets. (The selection and the Runs pane live in the route
+// instead — see stores/route.ts — so they come back the same way too.)
 let listColumnCollapsed = false;
 
 // The Scripts tab: user-defined JS templates with {{param}} holes extracted to fields, each with
@@ -49,39 +50,44 @@ let listColumnCollapsed = false;
 export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: string) => void }) {
   const store = useScripts();
   const { scripts, snapshot } = store;
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [secretNames, setSecretNames] = useState<readonly string[]>([]);
+  // The selection and the Runs pane are route state (#/scripts/<id>/runs), so leaving the tab and
+  // coming back lands on the same script. This view only ever renders on its own tab, so the
+  // route's id is its own.
+  const route = useRoute();
+  const selectedId = route.tab === "scripts" ? route.id : null;
+  const showLogs = route.tab === "scripts" && route.runs;
+  // `replace` for the corrections made here on the view's own initiative (a deleted or not-yet-
+  // loaded selection), which shouldn't leave a step in the history.
+  const setSelectedId = (id: string | null, replace = false) =>
+    navigate({ tab: "scripts", id, runs: showLogs }, { replace });
+  const toggleLogs = () => navigate({ tab: "scripts", id: selectedId, runs: !showLogs });
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [showLogs, setShowLogs] = useState(logsColumnOpen);
   const [listCollapsed, setListCollapsed] = useState(listColumnCollapsed);
-
-  const toggleLogs = () => {
-    logsColumnOpen = !showLogs;
-    setShowLogs(logsColumnOpen);
-  };
 
   const setCollapsed = (next: boolean) => {
     listColumnCollapsed = next;
     setListCollapsed(next);
   };
 
-  // Which vault entries exist, for the {{NAME:secret}} rows. Read on mount — this view is
-  // remounted every time the tab is opened, so a secret added in Settings is picked up on the way
-  // back here — and never their values, which the renderer is not given.
+  // The vault, for the key button beside a field holding a {{NAME}} reference. Read on mount —
+  // this view is remounted every time the tab is opened, so a secret added in Settings is picked up
+  // on the way back here.
   useEffect(() => {
     void api.getSecrets().then(
-      (result) => setSecretNames(result.names),
+      (result) => setSecrets(result.values),
       () => undefined,
     );
   }, []);
 
   useEffect(() => {
+    // An empty list before the load lands is not yet a reason to drop a remembered selection.
     if (scripts.length === 0) {
-      if (selectedId !== null) setSelectedId(null);
+      if (selectedId !== null && !store.loading) setSelectedId(null, true);
       return;
     }
-    if (!scripts.some((s) => s.id === selectedId)) setSelectedId(scripts[0].id);
-  }, [scripts, selectedId]);
+    if (!scripts.some((s) => s.id === selectedId)) setSelectedId(scripts[0].id, true);
+  });
 
   const selected = scripts.find((s) => s.id === selectedId) ?? null;
   const isRunning = selected != null && snapshot.running.includes(selected.id);
@@ -90,6 +96,8 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
   const params = selected ? extractScriptParams(selected.source) : [];
 
   const onAdd = () => {
+    // The load's result replaces the whole list, so a row added before it lands would vanish.
+    if (store.loading) return;
     const script = blankScript();
     store.add(script);
     setSelectedId(script.id);
@@ -194,7 +202,7 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                 ariaLabel="Script to configure"
                 items={scripts.map((s) => ({
                   id: s.id,
-                  label: scriptLabel(s),
+                  label: jsScriptLabel(s),
                   running: snapshot.running.includes(s.id),
                 }))}
                 selectedId={selectedId}
@@ -246,7 +254,7 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
         </Column>
 
         <Column
-          title={selected ? scriptLabel(selected) : "Script"}
+          title={selected ? jsScriptLabel(selected) : "Script"}
           className="sched-panel"
           footer={
             selected && (
@@ -284,7 +292,7 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                       <TrashIcon /> Delete
                     </>
                   }
-                  title={`Delete "${scriptLabel(selected)}"?`}
+                  title={`Delete "${jsScriptLabel(selected)}"?`}
                   description={
                     isRunning
                       ? "It's running right now — it will be stopped. Its run history goes too."
@@ -335,15 +343,16 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                     <code>params.dir</code> inside strings. Name a kind to get a control instead of
                     a text box: <code>{"{{on:bool}}"}</code>, <code>{"{{out:dir}}"}</code>,{" "}
                     <code>{"{{pick:one(a|b)}}"}</code>, <code>{"{{tags:many(a|b)}}"}</code> — every
-                    value still arrives as a string. <code>{"{{API_KEY:secret}}"}</code> reads a
-                    value from Settings → Secrets instead, which keeps it out of this folder.
+                    value still arrives as a string. Type <code>{"{{API_KEY}}"}</code> into a field
+                    to use a secret from Settings → Secrets, which keeps its value out of this
+                    folder.
                   </>
                 )}
               </p>
               <ScriptParamFields
                 params={params}
                 values={selected.paramValues}
-                secretNames={secretNames}
+                secrets={secrets}
                 disabled={store.readOnly}
                 onChange={(name, value) =>
                   store.update(selected.id, {
@@ -367,6 +376,7 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                 disabled={store.readOnly}
               />
               <CronField
+                key={`cron-${selected.id}`}
                 value={selected.cron}
                 onChange={(v) => store.update(selected.id, { cron: v })}
                 disabled={store.readOnly}
@@ -375,6 +385,7 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
                 id="scriptEnabled"
                 label="Run on this schedule automatically"
                 checked={selected.enabled}
+                disabled={store.readOnly}
                 onChange={(v) => store.update(selected.id, { enabled: v })}
               />
             </>
@@ -401,7 +412,7 @@ export function ScriptsView({ onToast }: { onToast: (kind: ToastKind, text: stri
             title="Runs"
             className="sched-logs"
             scroll={false}
-            resize={{ cssVar: "--col-runs", min: 190, max: 520 }}
+            resize={{ cssVar: "--col-runs", minShare: 0.2, maxShare: 0.8 }}
           >
             {selected ? (
               <RunHistory runs={runs} />

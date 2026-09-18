@@ -116,6 +116,11 @@ describe("findMatches", () => {
   it("returns nothing for an empty query", () => {
     expect(findMatches("hello", "")).toEqual([]);
   });
+
+  it("keeps offsets in the source's own units when lowercasing would change the length", () => {
+    // "İ".toLowerCase() is two code units; a match after it must not shift by one.
+    expect(findMatches("İ foo", "foo")).toEqual([{ start: 2, end: 5 }]);
+  });
 });
 describe("lineCount", () => {
   it("counts one line for empty source", () => {

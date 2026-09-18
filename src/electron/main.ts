@@ -195,11 +195,12 @@ function refreshTrayMenu(): void {
   );
 }
 
-async function applySettingsToRunningApp(): Promise<void> {
-  const next = await getSettings();
-  minimizeToTrayOnClose = next.minimizeToTrayOnClose;
-  applyLaunchAtLogin(next.launchAtLogin);
-  applyTheme(next.theme);
+// Everything a settings change affects in the running app. Startup and every later save go
+// through here, so the two can't drift apart.
+function applySettings(settings: AppSettings): void {
+  minimizeToTrayOnClose = settings.minimizeToTrayOnClose;
+  applyLaunchAtLogin(settings.launchAtLogin);
+  applyTheme(settings.theme);
 }
 
 async function start(): Promise<void> {
@@ -210,10 +211,7 @@ async function start(): Promise<void> {
     sendLog(entry);
   });
 
-  const settings = await getSettings();
-  applyTheme(settings.theme);
-  minimizeToTrayOnClose = settings.minimizeToTrayOnClose;
-  applyLaunchAtLogin(settings.launchAtLogin);
+  applySettings(await getSettings());
   nativeTheme.on("updated", () => {
     if (win && !win.isDestroyed()) win.setBackgroundColor(windowBackground());
   });
@@ -234,7 +232,7 @@ async function start(): Promise<void> {
     const raw = typeof partial === "object" && partial !== null ? partial : {};
     const before = await getSettings();
     const next = await saveSettings(raw as Partial<AppSettings>);
-    await applySettingsToRunningApp();
+    applySettings(next);
     // The Scripts tab is reading a different folder now. Nothing else would notice, so the
     // scheduler is told to re-read and push the new list to the tab.
     if (next.scriptsDir !== before.scriptsDir) await schedulerBridge?.reloadScripts();

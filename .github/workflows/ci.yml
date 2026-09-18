@@ -12,19 +12,19 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   lint:
     name: Lint (typecheck + biome)
     runs-on: ubuntu-latest
+    # A newer push to the same ref supersedes this one.
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.ref }}-lint
+      cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run typecheck
@@ -33,11 +33,15 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    # A newer push to the same ref supersedes this one.
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.ref }}-test
+      cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm test
@@ -78,11 +82,15 @@ jobs:
               release/*.blockmap
               release/latest-mac.yml
     runs-on: ${{ matrix.os }}
+    # A newer push to the same ref supersedes this one.
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.ref }}-build-${{ matrix.os }}
+      cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - name: Build ${{ matrix.name }}
@@ -91,7 +99,7 @@ jobs:
           # No signing certificates in CI: keep electron-builder from looking for a keychain
           # identity and failing the macOS build.
           CSC_IDENTITY_AUTO_DISCOVERY: false
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.path }}
@@ -106,8 +114,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # Never cancel a publish in flight. The step below deletes the rolling `latest` release before
+    # it uploads the new one; a workflow-level cancel-in-progress used to kill it in that window
+    # (a second push while ~440 MB of installers were uploading), leaving the repo with no release
+    # at all and the in-app update check finding nothing. Publishes now queue behind each other.
+    concurrency:
+      group: release-${{ github.repository }}
+      cancel-in-progress: false
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
       - name: Publish binaries to a GitHub Release

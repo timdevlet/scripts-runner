@@ -72,31 +72,62 @@ async function readConfig(dir: string, folder: string): Promise<unknown> {
 }
 
 // ---------------------------------------------------------------------------
-// Load
+// Reading the directory
 // ---------------------------------------------------------------------------
 
-export async function loadJsScripts(dir: string): Promise<JsScript[]> {
-  const entries: { folder: string; script: JsScript; order: number }[] = [];
+interface FolderEntry {
+  folder: string;
+  script: JsScript;
+  order: number;
+}
+
+// Every script folder in `dir`, in list order, with ids made unique the same way normalizeJsScripts
+// does it. Load and save both go through here, so they agree on which folder holds which script:
+// two copy-pasted folders sharing an id load as a script and its "-2" twin, and the save then
+// writes the twin's config back into its own folder. (When the two disagreed, the twin got a third
+// folder on every save and the list grew by one script per load.) A config with no id is the same
+// story — the folder name stands in for it, on both sides.
+//
+// A folder without a config is not a script folder and is skipped. One that cannot be read is
+// the caller's call: a load propagates, so the tab goes read-only with the reason instead of
+// quietly losing a script that the next autosave would then delete from disk; a save skips it,
+// so a folder that is not ours is left alone and never deleted.
+async function readFolders(
+  dir: string,
+  { tolerant }: { tolerant: boolean },
+): Promise<FolderEntry[]> {
+  const entries: FolderEntry[] = [];
   for (const folder of await listFolders(dir)) {
-    // No config: not a script folder. Anything else — unreadable, malformed JSON — propagates, so
-    // the tab goes read-only with the reason instead of quietly losing a script that the next
-    // autosave would then delete from disk.
-    const raw = await readConfig(dir, folder);
-    if (raw === undefined) continue;
+    let raw: unknown;
     let source = "";
     try {
-      source = await readFile(join(dir, folder, SOURCE_FILE), "utf8");
+      raw = await readConfig(dir, folder);
+      if (raw === undefined) continue;
+      try {
+        source = await readFile(join(dir, folder, SOURCE_FILE), "utf8");
+      } catch (err) {
+        // A config with no source beside it is an empty script, not a failure — that is what a
+        // half-finished hand-written folder looks like, and the tab can still open it.
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
     } catch (err) {
-      // A config with no source beside it is an empty script, not a failure — that is what a
-      // half-finished hand-written folder looks like, and the tab can still open it.
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      if (tolerant) continue;
+      throw err;
     }
     entries.push({ folder, ...parseJsScriptConfig(raw, source, folder) });
   }
   entries.sort((a, b) => a.order - b.order || a.folder.localeCompare(b.folder));
-  // Through normalize once more so two folders that ended up with the same id (a copy-pasted
-  // folder) are separated rather than colliding in the scheduler.
-  return normalizeJsScripts(entries.map((entry) => entry.script));
+  // normalize keeps every entry (they are all objects) and their order, so the two line up.
+  const scripts = normalizeJsScripts(entries.map((entry) => entry.script));
+  return entries.map((entry, i) => ({ ...entry, script: scripts[i] }));
+}
+
+// ---------------------------------------------------------------------------
+// Load
+// ---------------------------------------------------------------------------
+
+export async function loadJsScripts(dir: string): Promise<JsScript[]> {
+  return (await readFolders(dir, { tolerant: false })).map((entry) => entry.script);
 }
 
 // ---------------------------------------------------------------------------
@@ -108,16 +139,8 @@ export async function loadJsScripts(dir: string): Promise<JsScript[]> {
 // we cannot identify is not ours: it is left alone, and never deleted.
 async function currentFolders(dir: string): Promise<Map<string, string>> {
   const byId = new Map<string, string>();
-  for (const folder of await listFolders(dir)) {
-    let raw: unknown;
-    try {
-      raw = await readConfig(dir, folder);
-    } catch {
-      continue;
-    }
-    if (typeof raw !== "object" || raw === null) continue;
-    const id = (raw as Record<string, unknown>).id;
-    if (typeof id === "string" && id.trim() && !byId.has(id.trim())) byId.set(id.trim(), folder);
+  for (const { folder, script } of await readFolders(dir, { tolerant: true })) {
+    byId.set(script.id, folder);
   }
   return byId;
 }

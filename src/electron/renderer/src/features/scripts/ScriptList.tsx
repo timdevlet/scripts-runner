@@ -1,3 +1,4 @@
+import { jsScriptLabel } from "../../../../../domain/js-script";
 import { scriptParamsFilled } from "../../../../../domain/script-params";
 import { ClockIcon } from "../../components/icons";
 import { RunButton } from "../../components/RunButton";
@@ -5,17 +6,6 @@ import { Truncate } from "../../components/Truncate";
 import { formatCountdown, formatWhen } from "../../lib/datetime";
 import type { JsScript, SchedulerSnapshot } from "../../types";
 import "../scheduler/ScheduledCommandList.scss";
-
-export function scriptLabel(script: JsScript): string {
-  const name = script.name.trim();
-  if (name) return name;
-  const source = script.source.trim();
-  if (!source) return "Untitled script";
-  const first =
-    source.split("\n").find((line) => line.trim() && !line.trim().startsWith("//")) ?? source;
-  const compact = first.trim();
-  return compact.length > 40 ? `${compact.slice(0, 40)}…` : compact;
-}
 
 function scheduleSubtitle(script: JsScript, nextAt: number | null | undefined): string {
   if (!script.source.trim()) return "Nothing to run yet";
@@ -63,7 +53,7 @@ export function ScriptList({
               <span className="sched-row-text">
                 <span className="sched-row-label">
                   {scheduled && <ClockIcon size={13} />}
-                  <Truncate text={scriptLabel(script)} />
+                  <Truncate text={jsScriptLabel(script)} />
                 </span>
                 <small className="sched-row-subtitle">
                   {scheduleSubtitle(script, snapshot.nextRunAt[script.id])}
@@ -74,8 +64,8 @@ export function ScriptList({
               running={running.has(script.id)}
               pending={pendingId === script.id}
               disabled={!script.source.trim()}
-              label={`Run "${scriptLabel(script)}" now`}
-              runningLabel={`"${scriptLabel(script)}" is running`}
+              label={`Run "${jsScriptLabel(script)}" now`}
+              runningLabel={`"${jsScriptLabel(script)}" is running`}
               onRun={() => onRun(script.id)}
             />
           </div>

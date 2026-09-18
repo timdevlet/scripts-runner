@@ -78,6 +78,21 @@ describe("createLogStore", () => {
     stop();
   });
 
+  it("a clear discards a history fetch that was still in flight", async () => {
+    const { source, emit, history } = stubSource();
+    const store = createLogStore(source);
+    const stop = store.start();
+
+    emit(entry(1));
+    store.clear(); // the user cleared while the backlog was still on its way…
+    history[0].resolve([entry(1), entry(2)]);
+    await tick();
+    expect(ids(store)).toEqual([]); // …so the backlog must not come back
+    emit(entry(3));
+    expect(ids(store)).toEqual([3]);
+    stop();
+  });
+
   it("a stopped session unsubscribes and discards its late history", async () => {
     const { source, history, counts } = stubSource();
     const store = createLogStore(source);

@@ -6,7 +6,6 @@ export type {
   RunLine,
   RunRecord,
   RunStatus,
-  RunTrigger,
   ScheduledCommand,
   SchedulerSnapshot,
 } from "../../../domain/scheduled.js";

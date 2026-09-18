@@ -30,6 +30,9 @@ export function createLogStore(source: LogSource, maxRenderedLines = MAX_RENDERE
   // by id to render every line exactly once — which also makes StrictMode's doubled dev effect
   // (start/stop/start, history fetched twice) harmless.
   const seenIds = new Set<number>();
+  // Bumped by clear(), so a history fetch that was in flight when the user cleared the log can't
+  // land afterwards and bring the whole backlog back.
+  let generation = 0;
 
   function append(entry: LogEntry): void {
     if (seenIds.has(entry.id)) return;
@@ -56,11 +59,12 @@ export function createLogStore(source: LogSource, maxRenderedLines = MAX_RENDERE
     // a stopped session's late history result is discarded.
     start(): () => void {
       let alive = true;
+      const started = generation;
       const unsubscribe = source.onLog((entry) => {
         if (alive) append(entry);
       });
       void source.getHistory().then((history) => {
-        if (alive) history.forEach(append);
+        if (alive && generation === started) history.forEach(append);
       });
       return () => {
         alive = false;
@@ -69,6 +73,7 @@ export function createLogStore(source: LogSource, maxRenderedLines = MAX_RENDERE
     },
     // Optimistic: wipe the UI immediately; the main-process backlog clears fire-and-forget.
     clear(): void {
+      generation++;
       source.clearHistory();
       seenIds.clear();
       store.emit({ entries: [], count: 0 });

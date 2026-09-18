@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { emptyScheduledCommand } from "../../../../../domain/scheduled";
+import { emptyScheduledCommand, scheduledCommandLabel } from "../../../../../domain/scheduled";
 import { Button } from "../../components/Button";
 import { Column, Columns } from "../../components/Columns";
 import { ConfirmPopover } from "../../components/ConfirmPopover";
@@ -17,16 +17,18 @@ import {
   TrashIcon,
 } from "../../components/icons";
 import { RailNav } from "../../components/RailNav";
+import { SecretPeek } from "../../components/SecretPeek";
 import { SwitchField } from "../../components/SwitchField";
 import { TextArea } from "../../components/TextArea";
 import { TextInput } from "../../components/TextInput";
 import { useScheduler } from "../../hooks/useScheduler";
 import type { ToastKind } from "../../lib/toasts";
 import { api } from "../../stores/api";
+import { navigate, useRoute } from "../../stores/route";
 import type { ScheduledCommand } from "../../types";
 import { CronField } from "./CronField";
 import { RunHistory } from "./RunHistory";
-import { commandLabel, ScheduledCommandList } from "./ScheduledCommandList";
+import { ScheduledCommandList } from "./ScheduledCommandList";
 import { TimeoutField } from "./TimeoutField";
 import "./CommandsView.scss";
 
@@ -34,11 +36,9 @@ function blankCommand(): ScheduledCommand {
   return emptyScheduledCommand(crypto.randomUUID());
 }
 
-// Whether the logs column is open. Module scope, not component state: this view remounts on every
-// visit to the tab, and having the column close itself each time would be a nuisance. Off to start
-// with, so the two working columns stay roomy in a narrow window.
-let logsColumnOpen = false;
-// Whether the command list is zipped shut to its rail — kept at module scope for the same reason.
+// Whether the command list is zipped shut to its rail. Module scope, not component state: this
+// view remounts on every visit to the tab, and having the list re-open itself each time would be a
+// nuisance. (The selection and the Runs pane live in the route instead — see stores/route.ts.)
 let listColumnCollapsed = false;
 
 // The Commands tab (shown only when the `enableScheduler` feature flag is on): user-defined shell
@@ -54,36 +54,53 @@ let listColumnCollapsed = false;
 export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: string) => void }) {
   const scheduler = useScheduler();
   const { commands, snapshot } = scheduler;
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The selection and the Runs pane are route state (#/commands/<id>/runs), so leaving the tab and
+  // coming back lands on the same command. This view only ever renders on its own tab, so the
+  // route's id is its own.
+  const route = useRoute();
+  const selectedId = route.tab === "commands" ? route.id : null;
+  const showLogs = route.tab === "commands" && route.runs;
+  // `replace` for the corrections made here on the view's own initiative (a deleted or not-yet-
+  // loaded selection), which shouldn't leave a step in the history.
+  const setSelectedId = (id: string | null, replace = false) =>
+    navigate({ tab: "commands", id, runs: showLogs }, { replace });
+  const toggleLogs = () => navigate({ tab: "commands", id: selectedId, runs: !showLogs });
   // Ids with an in-flight ▶ / ■ press, so the button can't be double-fired while the IPC is out.
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [showLogs, setShowLogs] = useState(logsColumnOpen);
   const [listCollapsed, setListCollapsed] = useState(listColumnCollapsed);
-
-  const toggleLogs = () => {
-    logsColumnOpen = !showLogs;
-    setShowLogs(logsColumnOpen);
-  };
+  // The vault, for the key button beside a command holding a {{NAME}} reference. Read on mount,
+  // and this view remounts on every visit, so a secret added in Settings shows up on the way back.
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
 
   const setCollapsed = (next: boolean) => {
     listColumnCollapsed = next;
     setListCollapsed(next);
   };
 
+  useEffect(() => {
+    void api.getSecrets().then(
+      (result) => setSecrets(result.values),
+      () => undefined,
+    );
+  }, []);
+
   // Select the first command once the list loads, and never strand the panel on a deleted one.
   useEffect(() => {
+    // An empty list before the load lands is not yet a reason to drop a remembered selection.
     if (commands.length === 0) {
-      if (selectedId !== null) setSelectedId(null);
+      if (selectedId !== null && !scheduler.loading) setSelectedId(null, true);
       return;
     }
-    if (!commands.some((c) => c.id === selectedId)) setSelectedId(commands[0].id);
-  }, [commands, selectedId]);
+    if (!commands.some((c) => c.id === selectedId)) setSelectedId(commands[0].id, true);
+  });
 
   const selected = commands.find((c) => c.id === selectedId) ?? null;
   const isRunning = selected != null && snapshot.running.includes(selected.id);
   const runs = selected ? snapshot.runs.filter((r) => r.commandId === selected.id) : [];
 
   const onAdd = () => {
+    // The load's result replaces the whole list, so a row added before it lands would vanish.
+    if (scheduler.loading) return;
     const command = blankCommand();
     scheduler.add(command);
     setSelectedId(command.id);
@@ -184,7 +201,7 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
                 ariaLabel="Command to configure"
                 items={commands.map((c) => ({
                   id: c.id,
-                  label: commandLabel(c),
+                  label: scheduledCommandLabel(c),
                   running: snapshot.running.includes(c.id),
                 }))}
                 selectedId={selectedId}
@@ -240,7 +257,7 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
         {/* Run / Stop and Delete live in the pane's footer rather than after the last field, so
             they're one click away however far down the form is scrolled. */}
         <Column
-          title={selected ? commandLabel(selected) : "Command"}
+          title={selected ? scheduledCommandLabel(selected) : "Command"}
           className="sched-panel"
           footer={
             selected && (
@@ -273,7 +290,7 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
                       <TrashIcon /> Delete
                     </>
                   }
-                  title={`Delete "${commandLabel(selected)}"?`}
+                  title={`Delete "${scheduledCommandLabel(selected)}"?`}
                   description={
                     isRunning
                       ? "It's running right now — it will be stopped. Its run history goes too."
@@ -304,15 +321,18 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
                 />
               </Field>
               <Field label="Command" htmlFor="schedCommand">
-                <TextArea
-                  id="schedCommand"
-                  className="sched-command"
-                  rows={3}
-                  placeholder={"e.g. node ~/scripts/backup.js"}
-                  value={selected.command}
-                  onValueChange={(v) => scheduler.update(selected.id, { command: v })}
-                  disabled={scheduler.readOnly}
-                />
+                <div className="with-secret-peek">
+                  <TextArea
+                    id="schedCommand"
+                    className="sched-command"
+                    rows={3}
+                    placeholder={"e.g. node ~/scripts/backup.js"}
+                    value={selected.command}
+                    onValueChange={(v) => scheduler.update(selected.id, { command: v })}
+                    disabled={scheduler.readOnly}
+                  />
+                  <SecretPeek text={selected.command} secrets={secrets} />
+                </div>
               </Field>
               <p className="hint">
                 Runs through your login shell, so your normal PATH applies. A secret from Settings →
@@ -336,7 +356,10 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
                 onChange={(v) => scheduler.update(selected.id, { timeoutSeconds: v })}
                 disabled={scheduler.readOnly}
               />
+              {/* Keyed too: it holds the debounced preview, which would otherwise show the previous
+                  command's schedule under the new one until the next round-trip. */}
               <CronField
+                key={`cron-${selected.id}`}
                 value={selected.cron}
                 onChange={(v) => scheduler.update(selected.id, { cron: v })}
                 disabled={scheduler.readOnly}
@@ -345,6 +368,7 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
                 id="schedEnabled"
                 label="Run on this schedule automatically"
                 checked={selected.enabled}
+                disabled={scheduler.readOnly}
                 onChange={(v) => scheduler.update(selected.id, { enabled: v })}
               />
             </>
@@ -375,7 +399,7 @@ export function CommandsView({ onToast }: { onToast: (kind: ToastKind, text: str
             title="Runs"
             className="sched-logs"
             scroll={false}
-            resize={{ cssVar: "--col-runs", min: 190, max: 520 }}
+            resize={{ cssVar: "--col-runs", minShare: 0.2, maxShare: 0.8 }}
           >
             {selected ? (
               <RunHistory runs={runs} />

@@ -64,7 +64,7 @@ export function installUpdateIpc(getWindow: () => Electron.BrowserWindow | null)
   let lastChecked = 0;
   let inflight: Promise<UpdateCheckResult> | null = null;
 
-  const setState = (next: UpdateState): void => {
+  const setState = (next: UpdateState | null): void => {
     state = next;
     const win = getWindow();
     if (win && !win.isDestroyed()) win.webContents.send("update:state", state);
@@ -98,8 +98,12 @@ export function installUpdateIpc(getWindow: () => Electron.BrowserWindow | null)
         phase: "available",
         percent: 0,
       });
-    } else if (!found && state) {
-      state = null;
+    } else if (!found && state?.phase === "available") {
+      // The release went away (pulled, or superseded by something this build can't read). Pushed,
+      // not just dropped: the renderer's button would otherwise keep offering a download that
+      // answers "No update available." when clicked. A download already in hand is kept — the
+      // installer on disk is still good, and quitting installs it.
+      setState(null);
     }
     return { ok: true, update: state };
   }

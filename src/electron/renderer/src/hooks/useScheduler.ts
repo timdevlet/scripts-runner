@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { errorText } from "../../../../domain/errors";
 import { api } from "../stores/api";
 import type { ScheduledCommand, SchedulerSnapshot } from "../types";
-
-const AUTOSAVE_DEBOUNCE_MS = 400;
+import { useAutosave } from "./useAutosave";
 
 const EMPTY_SNAPSHOT: SchedulerSnapshot = { runs: [], running: [], nextRunAt: {} };
 
@@ -50,37 +49,18 @@ export function useScheduler() {
     };
   }, []);
 
-  // Autosave, mirroring useSettingsForm: debounce the write, and flush a pending one before an
-  // action that depends on it (▶ runs the STORED command, so the draft has to land first) and on
-  // unmount, so an edit made right before switching tabs isn't lost.
-  const pending = useRef<(() => Promise<void>) | null>(null);
-  const skipInitial = useRef(true);
-
-  useEffect(() => {
-    // The first draft is what was just loaded from disk — only user edits are saved.
-    if (loading || skipInitial.current) {
-      if (!loading) skipInitial.current = false;
-      return;
-    }
-    if (readOnly.current) return;
-    const save = async (): Promise<void> => {
-      pending.current = null;
+  const { flush } = useAutosave(
+    commands,
+    async (list) => {
       try {
-        const result = await api.saveScheduledCommands(commands);
+        const result = await api.saveScheduledCommands(list);
         setError(result.ok ? "" : result.error);
       } catch (err) {
         setError(errorText(err));
       }
-    };
-    pending.current = save;
-    const timer = setTimeout(() => void save(), AUTOSAVE_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [commands, loading]);
-
-  // `pending` is a ref, so this closure always runs the latest save.
-  const flush = useCallback((): Promise<void> => pending.current?.() ?? Promise.resolve(), []);
-  // Mount/unmount only — flush reads a ref, so listing it as a dep would re-run this every render.
-  useEffect(() => () => void flush(), []);
+    },
+    { ready: !loading, paused: readOnly.current },
+  );
 
   const update = useCallback((id: string, patch: Partial<ScheduledCommand>) => {
     setCommands((list) => list.map((c) => (c.id === id ? { ...c, ...patch } : c)));

@@ -69,6 +69,7 @@ describe("createEditSessions", () => {
     expect(t.editor.opened).toEqual([join(t.dir, "hello.js")]);
     expect(t.states).toEqual([{ id: "s1", open: true }]);
     expect(t.sessions.isOpen("s1")).toBe(true);
+    expect(t.sessions.openIds()).toEqual(["s1"]);
   });
 
   it("reports a save in the editor as new source", async () => {

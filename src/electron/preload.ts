@@ -32,18 +32,21 @@ export type JsScriptsResult = {
   error: string;
   scripts: JsScript[];
   snapshot: SchedulerSnapshot;
+  // Ids of the scripts with a VS Code session open (see editJsScript below).
+  editing: string[];
 };
 export type JsScriptsImportResult =
   | { ok: true; scripts: JsScript[] }
   | { ok: false; cancelled?: true; error?: string };
 export type SettingsSaveResult = { ok: true } | { ok: false; error?: string };
-// The secret vault, as much of it as the renderer is ever told: which names are set, and where the
-// file lives. Values stay in the main process. Every mutation answers with the fresh list, so the
-// Settings tab never has to ask again.
+// The secret vault as the renderer sees it: every entry with its value, the sorted names, and where
+// the file lives. Every mutation answers with the fresh vault, so the Settings tab never has to ask
+// again.
 export type SecretsResult = {
   ok: boolean;
   error: string;
   names: string[];
+  values: Record<string, string>;
   path: string;
 };
 // The native folder chooser behind "dir" script params.
@@ -91,14 +94,13 @@ const appAPI = {
   // Quit and install a downloaded update (install mode only).
   installUpdate: (): Promise<UpdateActionResult> => ipcRenderer.invoke("update:install"),
   // Fires on any update-state change: a re-check found a version, download progress, download
-  // finished.
-  onUpdateState: subscribe<UpdateState>("update:state"),
+  // finished — or null when the update on offer has gone away.
+  onUpdateState: subscribe<UpdateState | null>("update:state"),
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke("settings:get"),
   saveSettings: (partial: Partial<AppSettings>): Promise<SettingsSaveResult> =>
     ipcRenderer.invoke("settings:save", partial),
   onOpenSettings: subscribeVoid("open-settings"),
-  // The secret vault behind {{NAME}} in a command and {{NAME:secret}} in a script. Names in, names
-  // out — a value only ever travels towards the main process.
+  // The secret vault behind {{NAME}} in a command or a script's field.
   getSecrets: (): Promise<SecretsResult> => ipcRenderer.invoke("secrets:list"),
   setSecret: (name: string, value: string): Promise<SecretsResult> =>
     ipcRenderer.invoke("secrets:set", { name, value }),

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { errorText } from "../../../../../domain/errors";
 import { THEME_PREFERENCES } from "../../../../../domain/theme";
 import { Button } from "../../components/Button";
 import { DirectoryInput } from "../../components/DirectoryInput";
@@ -47,9 +48,13 @@ export function SettingsView({ initialSettings }: { initialSettings: AppSettings
   };
 
   // Typed, not toggled: the draft follows every keystroke, but saving waits for blur or Enter —
-  // each save re-reads the folder, and half a path is not a folder.
+  // each save re-reads the folder, and half a path is not a folder. The value last saved is kept
+  // apart from the draft, which by blur time already holds what was typed and so can't be the
+  // thing a commit is compared against.
+  const committedScriptsDir = useRef(initialSettings.scriptsDir);
   const commitScriptsDir = (scriptsDir: string): void => {
-    if (scriptsDir === draft.scriptsDir && scriptsPath) return;
+    if (scriptsDir.trim() === committedScriptsDir.current.trim()) return;
+    committedScriptsDir.current = scriptsDir;
     setDraft((current) => ({ ...current, scriptsDir }));
     void api.saveSettings({ scriptsDir }).then(readScriptsPath);
   };
@@ -57,13 +62,18 @@ export function SettingsView({ initialSettings }: { initialSettings: AppSettings
   const onCheck = async (): Promise<void> => {
     setChecking(true);
     setCheckNote("");
-    // Forced: this check is a click, so it must hit the network rather than replay a cached
-    // answer from the startup check.
-    const result = await api.checkForUpdate(true);
-    setChecking(false);
-    // An update turns into the row above via the store push, so only the quiet answers land here.
-    if (!result.ok) setCheckNote(result.error);
-    else if (!result.update) setCheckNote("You're up to date.");
+    try {
+      // Forced: this check is a click, so it must hit the network rather than replay a cached
+      // answer from the startup check.
+      const result = await api.checkForUpdate(true);
+      // An update turns into the row above via the store push, so only the quiet answers land here.
+      if (!result.ok) setCheckNote(result.error);
+      else if (!result.update) setCheckNote("You're up to date.");
+    } catch (err) {
+      setCheckNote(errorText(err));
+    } finally {
+      setChecking(false);
+    }
   };
 
   const onAct = async (): Promise<void> => {
@@ -71,86 +81,93 @@ export function SettingsView({ initialSettings }: { initialSettings: AppSettings
     setCheckNote(error ?? "");
   };
 
+  // Two halves: what the scripts run against (their folder, their secrets), and the app itself.
   return (
     <div className="modal settings-view">
-      <SettingsGroup title="Appearance">
-        <Field label="Theme" className="inline">
-          <SegmentedControl
-            ariaLabel="Theme"
-            value={draft.theme}
-            options={THEME_OPTIONS}
-            onChange={(theme) => update({ theme })}
+      <section className="settings-section" aria-labelledby="settings-scripts">
+        <h2 id="settings-scripts">Scripts</h2>
+        <SettingsGroup title="Folder">
+          <Field label="Scripts folder" htmlFor="scriptsDir">
+            <DirectoryInput
+              id="scriptsDir"
+              value={draft.scriptsDir}
+              placeholder="Default location"
+              onValueChange={(scriptsDir) => setDraft((current) => ({ ...current, scriptsDir }))}
+              onCommit={commitScriptsDir}
+            />
+          </Field>
+          <p className="hint">
+            One folder per script, each holding <code>script.js</code> — the source, editable in any
+            editor — and <code>script.json</code> for its name, parameters and schedule. Leave the
+            field blank to use the default location.
+          </p>
+          {scriptsPath && <p className="hint">Currently reading {scriptsPath}</p>}
+        </SettingsGroup>
+        <SecretsSection />
+      </section>
+      <section className="settings-section" aria-labelledby="settings-system">
+        <h2 id="settings-system">System</h2>
+        <SettingsGroup title="Appearance">
+          <Field label="Theme" className="inline">
+            <SegmentedControl
+              ariaLabel="Theme"
+              value={draft.theme}
+              options={THEME_OPTIONS}
+              onChange={(theme) => update({ theme })}
+            />
+          </Field>
+        </SettingsGroup>
+        <SettingsGroup title="App">
+          <SwitchField
+            id="minimizeToTray"
+            label="Close window to the tray (keep schedules running)"
+            checked={draft.minimizeToTrayOnClose}
+            onChange={(minimizeToTrayOnClose) => update({ minimizeToTrayOnClose })}
           />
-        </Field>
-      </SettingsGroup>
-      <SettingsGroup title="App">
-        <SwitchField
-          id="minimizeToTray"
-          label="Close window to the tray (keep schedules running)"
-          checked={draft.minimizeToTrayOnClose}
-          onChange={(minimizeToTrayOnClose) => update({ minimizeToTrayOnClose })}
-        />
-        <SwitchField
-          id="launchAtLogin"
-          label="Launch at login"
-          checked={draft.launchAtLogin}
-          onChange={(launchAtLogin) => update({ launchAtLogin })}
-        />
-        <p className="hint">
-          Schedules only fire while this app is running. Closing to the tray (or launching at login)
-          keeps them armed in the background.
-        </p>
-      </SettingsGroup>
-      <SettingsGroup title="Scripts">
-        <Field label="Scripts folder" htmlFor="scriptsDir">
-          <DirectoryInput
-            id="scriptsDir"
-            value={draft.scriptsDir}
-            placeholder="Default location"
-            onValueChange={(scriptsDir) => setDraft((current) => ({ ...current, scriptsDir }))}
-            onCommit={commitScriptsDir}
+          <SwitchField
+            id="launchAtLogin"
+            label="Launch at login"
+            checked={draft.launchAtLogin}
+            onChange={(launchAtLogin) => update({ launchAtLogin })}
           />
-        </Field>
-        <p className="hint">
-          One folder per script, each holding <code>script.js</code> — the source, editable in any
-          editor — and <code>script.json</code> for its name, parameters and schedule. Leave the
-          field blank to use the default location.
-        </p>
-        {scriptsPath && <p className="hint">Currently reading {scriptsPath}</p>}
-      </SettingsGroup>
-      <SecretsSection />
-      <SettingsGroup title="Updates">
-        <div className="update-row">
-          <span>
-            {available?.phase === "downloaded"
-              ? `Version ${available.version} is downloaded — restart to finish updating.`
-              : available
-                ? `Version ${available.version} is available${appVersion ? ` (you have ${appVersion})` : ""}.`
-                : `You're on version ${appVersion || "…"}.`}
-          </span>
-          {available ? (
-            <Button
-              variant="primary"
-              pill
-              size="small"
-              disabled={available.phase === "downloading"}
-              onClick={() => void onAct()}
-            >
-              {updateActionLabel(available)}
-            </Button>
-          ) : (
-            <Button pill size="small" disabled={checking} onClick={() => void onCheck()}>
-              {checking ? "Checking…" : "Check for updates"}
-            </Button>
-          )}
-        </div>
-        {checkNote && <p className="hint update-note">{checkNote}</p>}
-        <p className="hint">
-          {available?.mode === "browser"
-            ? "The download opens in your browser — replace the app with it to finish updating."
-            : "Updates are checked automatically in the background."}
-        </p>
-      </SettingsGroup>
+          <p className="hint">
+            Schedules only fire while this app is running. Closing to the tray (or launching at
+            login) keeps them armed in the background.
+          </p>
+        </SettingsGroup>
+        <SettingsGroup title="Updates">
+          <div className="update-row">
+            <span>
+              {available?.phase === "downloaded"
+                ? `Version ${available.version} is downloaded — restart to finish updating.`
+                : available
+                  ? `Version ${available.version} is available${appVersion ? ` (you have ${appVersion})` : ""}.`
+                  : `You're on version ${appVersion || "…"}.`}
+            </span>
+            {available ? (
+              <Button
+                variant="primary"
+                pill
+                size="small"
+                disabled={available.phase === "downloading"}
+                onClick={() => void onAct()}
+              >
+                {updateActionLabel(available)}
+              </Button>
+            ) : (
+              <Button pill size="small" disabled={checking} onClick={() => void onCheck()}>
+                {checking ? "Checking…" : "Check for updates"}
+              </Button>
+            )}
+          </div>
+          {checkNote && <p className="hint update-note">{checkNote}</p>}
+          <p className="hint">
+            {available?.mode === "browser"
+              ? "The download opens in your browser — replace the app with it to finish updating."
+              : "Updates are checked automatically in the background."}
+          </p>
+        </SettingsGroup>
+      </section>
     </div>
   );
 }

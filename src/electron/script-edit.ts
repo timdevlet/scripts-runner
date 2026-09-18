@@ -35,6 +35,9 @@ export function editFileName(script: Pick<JsScript, "id" | "name" | "source">): 
 }
 
 export interface ScriptEditBridge {
+  // Ids of the scripts open in VS Code right now. The Scripts tab asks on every mount: it is
+  // remounted each time the tab is visited, and the sessions outlive it.
+  openIds(): string[];
   dispose(): void;
 }
 
@@ -76,6 +79,7 @@ export function installScriptEditIpc(deps: {
   });
 
   return {
+    openIds: () => sessions.openIds(),
     dispose() {
       sessions.dispose();
       ipcMain.removeHandler("scripts:edit");

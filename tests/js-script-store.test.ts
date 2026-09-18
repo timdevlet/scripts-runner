@@ -179,6 +179,37 @@ describe("loadJsScripts", () => {
     expect(loaded).toMatchObject({ id: "hand-made", name: "Hand made", source: "console.log(1)" });
   });
 
+  it("keeps two folders that share an id as two scripts, across a save", async () => {
+    for (const folder of ["first", "second"]) {
+      mkdirSync(join(dir, folder), { recursive: true });
+      writeFileSync(join(dir, folder, "script.js"), `// ${folder}\n`, "utf8");
+      writeFileSync(
+        join(dir, folder, "script.json"),
+        JSON.stringify({ id: "same", name: folder }),
+        "utf8",
+      );
+    }
+    const loaded = await loadJsScripts(dir);
+    expect(loaded.map((s) => s.id)).toEqual(["same", "same-2"]);
+
+    // The save writes the twin's new id into ITS folder — not into a third one, which used to add
+    // a script to the list on every load/save round.
+    await saveJsScripts(dir, loaded);
+    expect(config("second").id).toBe("same-2");
+    expect(existsSync(join(dir, "second-2"))).toBe(false);
+    await expect(loadJsScripts(dir)).resolves.toHaveLength(2);
+  });
+
+  it("saves a hand-made folder with no id back into that folder", async () => {
+    mkdirSync(join(dir, "hand-made"), { recursive: true });
+    writeFileSync(join(dir, "hand-made", "script.js"), "console.log(1)\n", "utf8");
+    writeFileSync(join(dir, "hand-made", "script.json"), '{"name":"Hand made"}', "utf8");
+
+    await saveJsScripts(dir, await loadJsScripts(dir));
+    expect(config("hand-made").id).toBe("hand-made");
+    expect(existsSync(join(dir, "hand-made-2"))).toBe(false);
+  });
+
   it("refuses to read a directory holding a malformed config", async () => {
     await saveJsScripts(dir, [script()]);
     writeFileSync(join(dir, "list-directory", "script.json"), "{ not json", "utf8");

@@ -5,10 +5,3 @@
   flex-direction: column;
   gap: inherit;
 }
-
-/* A :secret hole has no control — just a line saying whether the vault holds it. Carries the same
-   bottom margin as a field, so it keeps the form's rhythm instead of colliding with the row under
-   it. */
-.script-params .hint.script-secret {
-  margin: 0 0 12px;
-}

@@ -1,4 +1,4 @@
-// Reads and writes secrets.json — the vault behind {{NAME}} in a command and {{NAME:secret}} in a
+// Reads and writes secrets.json — the vault behind {{NAME}} in a command or a script field, kept in a
 // script. Its own file, next to settings.json in the data dir (see src/paths.ts), so the files
 // that describe jobs hold names only and stay safe to commit, export and hand to someone else.
 //

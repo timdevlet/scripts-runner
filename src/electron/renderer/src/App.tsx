@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { IconButton } from "./components/IconButton";
 import { TrashIcon } from "./components/icons";
@@ -12,12 +12,12 @@ import { SettingsView } from "./features/settings/SettingsView";
 import { useLogs } from "./hooks/useLogs";
 import { useOpenSettingsEvent } from "./hooks/useOpenSettingsEvent";
 import { useToasts } from "./hooks/useToasts";
+import { type Tab, tabRoute } from "./lib/route";
 import { api } from "./stores/api";
+import { lastRoute, navigate, useRoute } from "./stores/route";
 import type { AppSettings } from "./types";
 
-type View = "commands" | "scripts" | "settings" | "logs";
-
-const TABS: readonly { value: View; label: string }[] = [
+const TABS: readonly { value: Tab; label: string }[] = [
   { value: "scripts", label: "Scripts" },
   { value: "commands", label: "Commands" },
   { value: "settings", label: "Settings" },
@@ -27,27 +27,35 @@ const TABS: readonly { value: View; label: string }[] = [
 export default function App() {
   const logs = useLogs();
   const toasts = useToasts();
-  const [view, setView] = useState<View>("scripts");
+  // Which tab is showing comes from the route (the window's hash — see lib/route.ts), as does the
+  // selection inside the Scripts and Commands tabs. That is what lets a tab be left and come back
+  // to as it was.
+  const { tab: view } = useRoute();
   const [autoScroll, setAutoScroll] = useState(true);
   const [settings, setSettings] = useState<AppSettings | null>(null);
 
-  const openSettings = useCallback(async () => {
-    setView("settings");
-    setSettings(await api.getSettings());
-  }, []);
-
-  const onTabChange = useCallback(
-    (next: View) => {
-      if (next === "settings") {
-        void openSettings();
-        return;
-      }
+  // SettingsView seeds its form from the settings it mounts with, so they are read fresh on every
+  // visit and cleared on the way out — a stale copy from an earlier visit must not be what it
+  // sees while the new read is still on its way.
+  useEffect(() => {
+    if (view !== "settings") {
       setSettings(null);
-      setView(next);
-    },
-    [openSettings],
-  );
+      return;
+    }
+    let live = true;
+    void api.getSettings().then((loaded) => {
+      if (live) setSettings(loaded);
+    });
+    return () => {
+      live = false;
+    };
+  }, [view]);
 
+  // A tab picked from the bar opens where it was last left: the same script or command, with the
+  // Runs pane as it was.
+  const onTabChange = useCallback((next: Tab) => navigate(lastRoute(next)), []);
+
+  const openSettings = useCallback(() => navigate(tabRoute("settings")), []);
   useOpenSettingsEvent(openSettings);
 
   return (

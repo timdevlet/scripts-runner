@@ -15,9 +15,9 @@ export interface JsScriptRun {
   paramValues: Record<string, string>;
   cwd: string;
   timeoutSeconds: number;
-  // Values for the source's {{NAME:secret}} holes, which compile to process.env.NAME. They travel
-  // in the child's environment rather than in the compiled body, so the temp file below never
-  // holds a copy of them.
+  // Values for the {{NAME}} references in the param values, which compile to process.env.NAME.
+  // They travel in the child's environment rather than in the compiled body, so the temp file
+  // below never holds a copy of them.
   secrets?: Record<string, string>;
 }
 
