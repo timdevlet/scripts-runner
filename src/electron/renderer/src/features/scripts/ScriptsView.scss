@@ -5,3 +5,39 @@
   flex-direction: column;
   gap: inherit;
 }
+
+/* The name filter atop the script list — the same field as the editor's find box. */
+.script-filter {
+  position: relative;
+  margin-bottom: 2px;
+}
+
+.script-filter-icon {
+  position: absolute;
+  top: 50%;
+  left: 7px;
+  display: flex;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.script-filter-input {
+  width: 100%;
+  height: 28px;
+  padding: 4px 8px 4px 28px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+}
+
+.script-filter-empty {
+  margin: 4px 2px;
+}

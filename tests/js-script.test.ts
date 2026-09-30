@@ -6,6 +6,7 @@ import {
   JS_SCRIPT_FILE_VERSION,
   type JsScript,
   jsScriptLabel,
+  jsScriptMatchesFilter,
   normalizeJsScripts,
   parseJsScriptFile,
   scriptFolderName,
@@ -181,5 +182,35 @@ describe("scriptFolderNames", () => {
   it("steps around folders that belong to something else", () => {
     const names = scriptFolderNames([{ id: "a", name: "Backup" }], new Set(["backup"]));
     expect(names.get("a")).toBe("backup-2");
+  });
+});
+
+describe("jsScriptMatchesFilter", () => {
+  const named = (name: string) => script({ name });
+
+  it("matches everything on an empty or blank query", () => {
+    expect(jsScriptMatchesFilter(named("Steam"), "")).toBe(true);
+    expect(jsScriptMatchesFilter(named("Steam"), "   ")).toBe(true);
+  });
+
+  it("matches a substring anywhere in the name, ignoring case", () => {
+    expect(jsScriptMatchesFilter(named("List directory"), "DIREC")).toBe(true);
+    expect(jsScriptMatchesFilter(named("List directory"), "zip")).toBe(false);
+  });
+
+  it("wants short queries exact", () => {
+    expect(jsScriptMatchesFilter(named("Steam"), "stam")).toBe(false);
+  });
+
+  it("allows one typo per five characters typed", () => {
+    expect(jsScriptMatchesFilter(named("Download"), "dowload")).toBe(true);
+    expect(jsScriptMatchesFilter(named("Download"), "dxwnlxad")).toBe(false);
+    expect(jsScriptMatchesFilter(named("Backup photos"), "bakup phitos")).toBe(true);
+  });
+
+  it("matches the label an untitled script shows", () => {
+    expect(jsScriptMatchesFilter(script({ name: "", source: "console.log(1)" }), "console")).toBe(
+      true,
+    );
   });
 });

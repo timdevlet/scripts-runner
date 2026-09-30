@@ -63,6 +63,44 @@ export function jsScriptLabel(script: Pick<JsScript, "name" | "source">): string
   return compact.length > 40 ? `${compact.slice(0, 40)}…` : compact;
 }
 
+// How many typed characters buy one typo in the list filter. A query shorter than this has to
+// appear in the name as typed: "dowload" (7) still finds "Download", "stam" (4) doesn't find "Steam".
+const FILTER_CHARS_PER_TYPO = 5;
+
+// The fewest single-character edits (insert, delete, substitute) that turn `needle` into some run
+// of `haystack` — 0 when it's already a substring. Levenshtein with a free start and end in the
+// haystack (Sellers' algorithm): one row per haystack character, so O(needle × haystack).
+function substringEditDistance(needle: string, haystack: string): number {
+  let prev = Array.from({ length: needle.length + 1 }, (_, i) => i);
+  let best = prev[needle.length];
+  for (const ch of haystack) {
+    // row[0] stays 0: a match may start at any character of the haystack.
+    const row = [0];
+    for (let i = 1; i <= needle.length; i++) {
+      const cost = needle[i - 1] === ch ? 0 : 1;
+      row[i] = Math.min(prev[i] + 1, row[i - 1] + 1, prev[i - 1] + cost);
+    }
+    best = Math.min(best, row[needle.length]);
+    prev = row;
+  }
+  return best;
+}
+
+// Whether a script belongs in the Scripts list under the filter `query`. Matched against the label
+// the list shows, ignoring case, anywhere in it, with one differing character allowed per
+// FILTER_CHARS_PER_TYPO typed. An empty query matches everything.
+export function jsScriptMatchesFilter(
+  script: Pick<JsScript, "name" | "source">,
+  query: string,
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  const label = jsScriptLabel(script).toLowerCase();
+  if (label.includes(needle)) return true;
+  const allowed = Math.floor(needle.length / FILTER_CHARS_PER_TYPO);
+  return allowed > 0 && substringEditDistance(needle, label) <= allowed;
+}
+
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
