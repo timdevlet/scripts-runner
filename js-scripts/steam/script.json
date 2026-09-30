@@ -8,7 +8,8 @@
     "allAccounts": "true",
     "coversDir": "/private/tmp/arts",
     "pick": "random",
-    "coversOnly": "true"
+    "coversOnly": "true",
+    "favoritesOnly": "true"
   },
   "cron": "",
   "enabled": false,

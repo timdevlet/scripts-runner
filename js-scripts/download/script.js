@@ -41,16 +41,16 @@
 // types    static, animated, or any.
 // nsfw / humor      true, false, or any (these are tri-state, not booleans).
 //
-// Files are named:  [GAME NAME] [APPID] [RANK] [WIDTHxHEIGHT].[EXT]
-// e.g. "Portal 2 620 1 3840x1240.png"
+// Each game gets its own folder:  [GAME NAME] [APPID]/[RANK] [WxH] [STYLE] [ID].[EXT]
+// e.g. "Portal 2 620/1 3840x1240 alternate 12345.png". ID is the SteamGridDB
+// image id (steamgriddb.com/hero/<id>); style is left out when the API has none.
 //
-// The field order is deliberate. The companion "Steam BG to Wide Cover" script
-// can consume this folder as its coversDir: it finds the appid by taking the
-// longest run of digits in the filename, and a tie is won by the leftmost one.
-// Keeping the appid ahead of the resolution is what makes 3-digit appids such
-// as 620 or 440 still resolve correctly. Do not reorder the fields.
-// That script will also report ranks 2..N as duplicates for the same appid and
-// use rank 1 — correct, but noisy on a large folder.
+// The appid ends the folder name, where the companion "Steam BG to Wide Cover"
+// script reads it when it consumes this folder as its coversDir. Do not move it.
+// The extension is whatever SteamGridDB served — .png, .jpg or .webp.
+//
+// Files from the old flat layout ("Portal 2 620 1 3840x1240.png") are moved
+// into their game's folder at the start of a run (only listed in a dry run).
 //
 
 import fs from "node:fs";
@@ -872,50 +872,120 @@ function sanitizeName(raw) {
   return s || "Unknown";
 }
 
-// [GAME NAME] [APPID] [RANK] [WIDTHxHEIGHT].[EXT]
-// The stem always ends in digits, so it can never collide with a Windows
-// reserved device name (CON, NUL, COM1...) and no check for those is needed.
-function heroFileName(name, appid, rank, width, height, ext) {
-  const size = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
-    ? `${width}x${height}`
-    : "unknown";
-  return `${sanitizeName(name)} ${appid} ${rank} ${size}${ext}`;
+// [GAME NAME] [APPID] — one folder per game. The name always ends in digits, so
+// it can never collide with a Windows reserved device name (CON, NUL, COM1...)
+// and no check for those is needed.
+function gameFolderName(name, appid) {
+  return `${sanitizeName(name)} ${appid}`;
 }
 
-// Matches our own output positionally, anchored at the end. That is stricter
-// and safer than guessing which run of digits in a filename is the appid.
-const OUTPUT_RE = / (\d+) ([1-9]\d*) (\d+x\d+|unknown)\.[A-Za-z0-9]+$/;
+// [RANK] [WIDTHxHEIGHT] [STYLE] [ID].[EXT] inside the game's folder, e.g.
+// "1 3840x1240 alternate 12345.png". Rank leads so a natural sort of the folder
+// is best-first. Only fields that never change for an image go in: the vote
+// counts drift, so putting them in would rename the same file on every run.
+function heroFileName(rank, image, ext) {
+  const w = Number(image?.width);
+  const h = Number(image?.height);
+  const parts = [String(rank), w > 0 && h > 0 ? `${w}x${h}` : "unknown"];
+  const style = String(image?.style || "").toLowerCase().replace(/[^a-z0-9_]+/g, "");
+  if (style) parts.push(style);
+  if (/^\d+$/.test(String(image?.id ?? ""))) parts.push(String(image.id));
+  return `${parts.join(" ")}${ext}`;
+}
+
+// A game folder, matched by the appid at the end of its name. Anchored there
+// because the title in front can contain digits of its own ("Portal 2 620").
+const FOLDER_RE = / (\d+)$/;
+const RANK_RE = /^([1-9]\d*)(?: [^/\\]*)?\.[A-Za-z0-9]+$/;
+
+// The old flat layout, "[GAME NAME] [APPID] [RANK] [WIDTHxHEIGHT].[EXT]", matched
+// positionally so migrateFlatFiles can move it into the per-game layout.
+const LEGACY_RE = /^(.*) (\d+) ([1-9]\d*) (\d+x\d+|unknown)(\.[A-Za-z0-9]+)$/;
 
 // Index the output folder once. Doing this per game would be quadratic on a
-// folder that grows to several hundred files.
+// library of several hundred games.
+//
+// The first folder found for an appid is the one it keeps: a game Steam has since
+// renamed goes on filling its existing folder instead of starting a second one.
 function readOutDirIndex(outDir) {
-  const byAppid = new Map();
-  const names = new Set();
-  if (!isDir(outDir)) return { byAppid, names };
-  for (const entry of readdirOrThrow(outDir)) {
-    if (entry.startsWith(TEMP_PREFIX)) continue;
-    const m = entry.match(OUTPUT_RE);
-    if (!m) continue;
-    names.add(entry);
-    const list = byAppid.get(m[1]);
-    if (list) list.push(entry);
-    else byAppid.set(m[1], [entry]);
+  const byAppid = new Map(); // appid -> { dir, ranks: Map<rank, fileName> }
+  let files = 0;
+  if (!isDir(outDir)) return { byAppid, files };
+  const entries = readdirOrThrow(outDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    const m = entry.name.match(FOLDER_RE);
+    if (!m || byAppid.has(m[1])) continue;
+    const ranks = new Map();
+    for (const file of readdirSafe(path.join(outDir, entry.name))) {
+      const r = file.match(RANK_RE);
+      if (r && !ranks.has(Number(r[1]))) ranks.set(Number(r[1]), file);
+    }
+    files += ranks.size;
+    byAppid.set(m[1], { dir: entry.name, ranks });
   }
-  return { byAppid, names };
+  return { byAppid, files };
+}
+
+// Move files left by the old flat layout into their game's folder, keeping each
+// file's rank. One that would collide with a file already there is left alone
+// rather than overwriting it.
+function migrateFlatFiles(outDir, apply, log) {
+  if (!isDir(outDir)) return 0;
+  const { byAppid } = readOutDirIndex(outDir);
+  const byGame = new Map(); // folder -> [{ entry, rank, ext }]
+  for (const entry of readdirOrThrow(outDir)) {
+    const m = entry.match(LEGACY_RE);
+    if (!m || !isFile(path.join(outDir, entry))) continue;
+    const folder = byAppid.get(m[2])?.dir ?? gameFolderName(m[1], m[2]);
+    if (!byGame.has(folder)) byGame.set(folder, []);
+    byGame.get(folder).push({ entry, rank: Number(m[3]), size: m[4], ext: m[5].toLowerCase() });
+  }
+  let moved = 0;
+  for (const [folder, files] of byGame) {
+    files.sort((a, b) => a.rank - b.rank);
+    const dir = path.join(outDir, folder);
+    // The old name carried no style or id, so the moved file keeps what it had.
+    const ranks = new Set(readdirSafe(dir).map((f) => f.match(RANK_RE)?.[1]).filter(Boolean));
+    for (const { entry, rank, size, ext } of files) {
+      const rel = path.join(folder, `${rank} ${size}${ext}`);
+      const dest = path.join(outDir, rel);
+      if (ranks.has(String(rank))) {
+        log(`  left in place  ${entry} — ${folder} already has rank ${rank}`, "warn");
+        continue;
+      }
+      if (!apply) {
+        log(`  would move     ${entry} -> ${rel}`, "item");
+        continue;
+      }
+      fs.mkdirSync(dir, { recursive: true });
+      fs.renameSync(path.join(outDir, entry), dest);
+      ranks.add(String(rank));
+      moved++;
+    }
+  }
+  return moved;
 }
 
 // A previous run that was killed mid-download leaves temp files behind. They
-// are never visible as results, but there is no reason to keep them.
+// are never visible as results, but there is no reason to keep them. They sit
+// beside their target, so the game folders are searched too.
 function sweepStaleTemps(outDir, maxAgeMs = 3600_000) {
   if (!isDir(outDir)) return 0;
   let removed = 0;
   const cutoff = Date.now() - maxAgeMs;
-  for (const entry of readdirSafe(outDir)) {
-    if (!entry.startsWith(TEMP_PREFIX)) continue;
-    const full = path.join(outDir, entry);
-    try {
-      if (fs.statSync(full).mtimeMs < cutoff) { fs.rmSync(full, { force: true }); removed++; }
-    } catch { /* gone already, or not ours to remove */ }
+  const dirs = [outDir, ...readdirSafe(outDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => path.join(outDir, e.name))];
+  for (const dir of dirs) {
+    for (const entry of readdirSafe(dir)) {
+      if (!entry.startsWith(TEMP_PREFIX)) continue;
+      const full = path.join(dir, entry);
+      try {
+        if (fs.statSync(full).mtimeMs < cutoff) { fs.rmSync(full, { force: true }); removed++; }
+      } catch { /* gone already, or not ours to remove */ }
+    }
   }
   return removed;
 }
@@ -1195,7 +1265,7 @@ function pickExtension(contentType, url, image) {
 // Stream to a hidden temp beside the target, then rename. A download that is
 // interrupted or comes back short therefore never becomes a visible file, which
 // is what lets skipExisting trust whatever it finds in the folder.
-async function downloadImage(url, image, outDir, nameFor, maxBytes) {
+async function downloadImage(url, image, gameDir, nameFor, maxBytes) {
   const res = await withRetry(async () => {
     const r = await imageFetch(url);
     if (!r.ok) {
@@ -1225,8 +1295,8 @@ async function downloadImage(url, image, outDir, nameFor, maxBytes) {
   }
 
   const fileName = nameFor(ext);
-  const dest = path.join(outDir, fileName);
-  const temp = path.join(outDir, `${TEMP_PREFIX}${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const dest = path.join(gameDir, fileName);
+  const temp = path.join(gameDir, `${TEMP_PREFIX}${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
   activeTemps.add(temp);
   try {
@@ -1398,10 +1468,15 @@ async function processGame(game, ctx) {
   const artName = target ? target.name : game.name;
   const artLabel = label({ appid: artAppid, name: artName });
 
-  const existing = index.byAppid.get(artAppid) || [];
-  if (options.skipExisting && existing.length >= options.limit) {
-    lines.push([`  ${artLabel} already has ${existing.length} file(s)`, "item"]);
-    stats.skipped += existing.length;
+  // Reuse the folder this appid already has, so a game Steam renamed keeps
+  // filling the folder it started in.
+  let entry = index.byAppid.get(artAppid);
+  const folder = entry ? entry.dir : gameFolderName(artName || artAppid, artAppid);
+  const gameDir = path.join(outDir, folder);
+  const existing = entry ? entry.ranks.size : 0;
+  if (options.skipExisting && existing >= options.limit) {
+    lines.push([`  ${artLabel} already has ${existing} file(s)`, "item"]);
+    stats.skipped += existing;
     return { lines, stats };
   }
 
@@ -1424,30 +1499,39 @@ async function processGame(game, ctx) {
   for (let i = 0; i < picked.length; i++) {
     const image = picked[i];
     const rank = i + 1;
-    const nameFor = (ext) => heroFileName(artName || artAppid, artAppid, rank, Number(image.width), Number(image.height), ext);
+    const nameFor = (ext) => heroFileName(rank, image, ext);
     const votes = `+${Number(image.upvotes) || 0}/-${Number(image.downvotes) || 0}`;
-    const guess = nameFor(EXT_BY_MIME[String(image.mime || "").toLowerCase()] || ".png");
+    const size = `${Number(image.width) || "?"}x${Number(image.height) || "?"}`;
+    // A rank counts as present whatever its extension: the real one is only
+    // known once the server answers, and a guess from the listed mime can differ.
+    const have = entry?.ranks.get(rank);
+    const guess = path.join(folder, have || nameFor(EXT_BY_MIME[String(image.mime || "").toLowerCase()] || ".png"));
 
-    if (options.skipExisting && index.names.has(guess)) {
+    if (options.skipExisting && have) {
       lines.push([`    skip-existing ${guess}`, "item"]);
       stats.skipped++;
       continue;
     }
     if (!options.apply) {
-      lines.push([`    would write  ${guess}   (id ${image.id}, ${votes})`, "item"]);
+      lines.push([`    would write  ${guess}   (${size}, id ${image.id}, ${votes})`, "item"]);
       continue;
     }
 
     try {
-      const result = await downloadImage(image.url, image, outDir, nameFor, options.maxMB * 1024 * 1024);
+      fs.mkdirSync(gameDir, { recursive: true });
+      const result = await downloadImage(image.url, image, gameDir, nameFor, options.maxMB * 1024 * 1024);
       if (result.skipped) {
         lines.push([`    skipped      ${guess} — ${result.skipped}`, "warn"]);
         stats.skipped++;
       } else {
-        lines.push([`    wrote        ${result.fileName}   (${formatBytes(result.bytes)}, ${votes})`, "item"]);
+        // With skipExisting off, a rank can come back in a new format; the old
+        // file would otherwise sit beside it as a second copy of the same rank.
+        if (have && have !== result.fileName) fs.rmSync(path.join(gameDir, have), { force: true });
+        lines.push([`    wrote        ${path.join(folder, result.fileName)}   (${size}, ${formatBytes(result.bytes)}, ${votes})`, "item"]);
         stats.downloaded++;
         stats.bytes += result.bytes;
-        index.names.add(result.fileName);
+        if (!entry) { entry = { dir: folder, ranks: new Map() }; index.byAppid.set(artAppid, entry); }
+        entry.ranks.set(rank, result.fileName);
       }
       ctx.state.consecutiveFailures = 0;
     } catch (err) {
@@ -1536,9 +1620,11 @@ async function run(options, hooks = {}) {
     throw new UserError("outDir is required. Set it to the folder the hero images should be written to.");
   }
   const outDir = path.resolve(expandHome(options.outDir));
-  // Windows caps a full path at 260 characters; the longest name this script can
-  // produce is 175 bytes, so a deep outDir has to be caught before file 173.
-  if (process.platform === "win32" && outDir.length + 176 > 255) {
+  // Windows caps a full path at 260 characters. The longest relative path this
+  // script can produce is a 150-byte title, a space, a 10-digit appid, a
+  // separator and "50 99999x99999 white_logo 1234567890.webp" — 203 bytes — plus
+  // the separator after outDir.
+  if (process.platform === "win32" && outDir.length + 204 > 255) {
     throw new UserError(`The output folder path is too long for Windows: ${outDir}\nUse a shorter path.`);
   }
 
@@ -1635,9 +1721,12 @@ async function run(options, hooks = {}) {
   const swept = sweepStaleTemps(outDir);
   if (swept > 0) log(`Cleaned up ${swept} leftover partial download(s) from an earlier run.`, "warn");
 
+  const moved = migrateFlatFiles(outDir, options.apply, (m, level) => log(m, level));
+  if (moved > 0) log(`Moved ${moved} file(s) from the old flat layout into per-game folders.`, "warn");
+
   const index = readOutDirIndex(outDir);
-  if (index.names.size > 0) {
-    log(`Output folder already holds ${index.names.size} hero(es) for ${index.byAppid.size} game(s).`);
+  if (index.files > 0) {
+    log(`Output folder already holds ${index.files} hero(es) for ${index.byAppid.size} game(s).`);
   }
   log("");
 

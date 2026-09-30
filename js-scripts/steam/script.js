@@ -5,8 +5,9 @@
 // apply / allAccounts / skipExisting / coversOnly / favoritesOnly: true or false
 // steam / account / game / coversDir / restore: leave blank if unused
 //
-// coversDir: a folder of wide background images (the appid must appear in each
-// filename). A match there replaces both the game's wide cover AND its
+// coversDir: a folder of wide background images — one "[NAME] [APPID]" subfolder
+// per game, as the companion downloader writes it, or loose files with the appid
+// somewhere in each filename. A match there replaces both the game's wide cover AND its
 // background (hero) art, so the library page and the capsule agree.
 //
 // coversOnly: plan ONLY the games that folder matched, instead of also falling
@@ -21,9 +22,11 @@
 //
 // pick: first | random. What to do when the covers folder holds several images
 // for the same appid (which is exactly what the companion "Steam Heroes from
-// SteamGridDB" script produces, one file per rank). "first" takes the
-// alphabetically first name, so every run applies the same art; "random" draws a
-// different one of them each run, so repeated runs rotate the library's art.
+// SteamGridDB" script produces, one file per rank). "first" takes the first
+// name in natural order (rank 1), so every run applies the same art; "random" draws a
+// different one of them each run, so repeated runs rotate the library's art. It
+// skips the image the game already has (same file size as its current wide
+// cover) whenever the folder holds another one to pick instead.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -278,11 +281,15 @@ function discoverBackgrounds(steamRoot, gridDir, gridIndex) {
   return sources;
 }
 
-// Scan a user-provided folder of wide backgrounds. A file is matched to a game in
-// three steps, most reliable first:
+// Scan a user-provided folder of wide backgrounds. The companion downloader
+// writes one folder per game, "[NAME] [APPID]/[RANK] [WxH] [STYLE] [ID].[EXT]": every image in such
+// a folder belongs to the appid its name ends with, or — when that appid names
+// nothing here — to the game whose title the rest of the name matches.
 //
-//   1. the companion downloader's positional "[NAME] [APPID] [RANK] [WxH]" format,
-//      whose appid field is exact;
+// A loose file directly in the folder is matched in three steps, most reliable first:
+//
+//   1. the downloader's old flat "[NAME] [APPID] [RANK] [WxH]" format, whose
+//      appid field is exact;
 //   2. for any other filename, the longest maximal digit group that is a known
 //      appid (so "portal2-1222140" matches 1222140, not the stray "2");
 //   3. the title, for a file whose appid names nothing here — which is the normal
@@ -294,19 +301,49 @@ function discoverBackgrounds(steamRoot, gridDir, gridIndex) {
 // non-image files that were never candidates.
 //
 // pick decides which file wins an appid that several images claim. "first" keeps
-// the alphabetically first name, which is stable across runs — with the companion
-// heroes script's "[NAME] [APPID] [RANK] [WxH]" naming that is rank 1, the best
-// art. "random" draws one of them per run instead, so running again rotates the
+// the first name in natural order, which is stable across runs — in a downloader
+// folder that is rank 1, the best-ranked art (and 2 sorts before 10). "random" draws one of them per run instead, so running again rotates the
 // art. The draw happens per account, so two accounts on one machine can land on
 // different images for the same game — each account has its own grid folder.
-function discoverFolderCovers(coversDir, known, pick = "first", names = null) {
+//
+// current (appid -> [file, ...]) is what each game's wide cover slot holds now.
+// A random draw leaves out any candidate the same size in bytes as one of those
+// — almost certainly the image already applied — so a run changes the art
+// whenever the folder has anything else to offer.
+function discoverFolderCovers(coversDir, known, pick = "first", names = null, current = null) {
   const candidates = new Map(); // appid -> [name, ...], name-sorted
   const unmatched = [];
   const matchedByTitle = new Map(); // appid -> the title that found it
   const titles = titleIndex(names);
   let scanned = 0;
   let nonImages = 0;
-  for (const entry of readdirOrThrow(coversDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+  const add = (appid, name) => {
+    if (!candidates.has(appid)) candidates.set(appid, []);
+    candidates.get(appid).push(name);
+  };
+  const entries = readdirOrThrow(coversDir, { withFileTypes: true }).sort((a, b) => naturalCompare(a.name, b.name));
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const files = readdirSafe(path.join(coversDir, entry.name), { withFileTypes: true })
+      .filter((f) => f.isFile())
+      .sort((a, b) => naturalCompare(a.name, b.name));
+    const images = files.filter((f) => isImage(f.name)).map((f) => path.join(entry.name, f.name));
+    nonImages += files.length - images.length;
+    if (images.length === 0) continue;
+    scanned += images.length;
+    const m = entry.name.match(FOLDER_APPID_RE);
+    let appid = m && known.has(m[1]) ? m[1] : null;
+    if (!appid) {
+      // Same reasoning as a loose file below: a shortcut's art is filed under the
+      // real game's Steam appid, so only the title ties it to the local one.
+      const title = normalizeTitle(entry.name.replace(FOLDER_APPID_RE, ""));
+      const found = titles.get(title);
+      if (found) { appid = found; matchedByTitle.set(appid, title); }
+    }
+    if (!appid) { unmatched.push(...images); continue; }
+    for (const name of images) add(appid, name);
+  }
+  for (const entry of entries) {
     if (!entry.isFile()) continue;
     if (!isImage(entry.name)) { nonImages++; continue; }
     scanned++;
@@ -343,28 +380,47 @@ function discoverFolderCovers(coversDir, known, pick = "first", names = null) {
       }
     }
     if (!appid) { unmatched.push(entry.name); continue; }
-    if (!candidates.has(appid)) candidates.set(appid, []);
-    candidates.get(appid).push(entry.name);
+    add(appid, entry.name);
   }
 
   const covers = new Map();  // appid -> { file, name }
   const passedOver = [];     // { name, appid, kept } — another file won this appid
+  let redrawn = 0;           // random draws that steered away from the applied image
   for (const [appid, names] of candidates) {
-    const chosen = pick === "random" ? names[Math.floor(Math.random() * names.length)] : names[0];
+    let pool = names;
+    if (pick === "random" && current?.has(appid)) {
+      const applied = new Set(current.get(appid).map(fileSize).filter((n) => n !== null));
+      const fresh = names.filter((name) => !applied.has(fileSize(path.join(coversDir, name))));
+      if (fresh.length > 0 && fresh.length < names.length) { pool = fresh; redrawn++; }
+    }
+    const chosen = pick === "random" ? pool[Math.floor(Math.random() * pool.length)] : pool[0];
     covers.set(appid, { file: path.join(coversDir, chosen), name: chosen });
     for (const name of names) {
-      if (name !== chosen) passedOver.push({ name, appid, kept: chosen });
+      // The other ranks in the winner's own game folder are alternates by design,
+      // not a conflict worth reporting.
+      const sameGameFolder = path.dirname(name) !== "." && path.dirname(name) === path.dirname(chosen);
+      if (name !== chosen && !sameGameFolder) passedOver.push({ name, appid, kept: chosen });
     }
   }
-  return { covers, unmatched, passedOver, scanned, nonImages, matchedByTitle };
+  return { covers, unmatched, passedOver, scanned, nonImages, matchedByTitle, redrawn };
 }
+
+function fileSize(file) {
+  try { return fs.statSync(file).size; } catch { return null; }
+}
+
+// Natural order, so "2.png" sorts before "10.png".
+const naturalCompare = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+
+// A downloader game folder, "[NAME] [APPID]": the appid is the trailing number.
+const FOLDER_APPID_RE = / (\d+)$/;
 
 // Case, punctuation and spacing dropped, so "Resonance: A Plague Tale Legacy"
 // and the sanitized "Resonance A Plague Tale Legacy" in a filename compare equal.
 const normalizeTitle = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-// The companion downloader writes "[NAME] [APPID] [RANK] [WIDTHxHEIGHT].[EXT]".
-// Stripping that fixed tail leaves the title; anything else falls back to the
+// The companion downloader's old flat layout, "[NAME] [APPID] [RANK] [WIDTHxHEIGHT].[EXT]",
+// is still accepted for loose files. Stripping that fixed tail leaves the title; anything else falls back to the
 // whole stem, so a hand-named file still has something to match on.
 const OUTPUT_TAIL_RE = / (\d+) ([1-9]\d*) (\d+x\d+|unknown)$/;
 
@@ -388,15 +444,31 @@ function titleIndex(names) {
   return seen;
 }
 
-// Every digit group appearing in a covers folder's filenames — used to widen the
-// set of appids we look names up for before we know which ones are real.
+// Every digit group appearing in a covers folder's filenames and game-folder
+// names — used to widen the set of appids we look names up for before we know
+// which ones are real.
 function coversFolderAppidCandidates(coversDir) {
   const out = new Set();
   for (const entry of readdirOrThrow(coversDir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      const m = entry.name.match(FOLDER_APPID_RE);
+      if (m) out.add(m[1]);
+      continue;
+    }
     if (!entry.isFile() || !isImage(entry.name)) continue;
     for (const g of path.basename(entry.name, path.extname(entry.name)).match(/\d+/g) || []) out.add(g);
   }
   return out;
+}
+
+// Images directly in the covers folder plus those one level down in game folders.
+function countCoverImages(coversDir) {
+  let n = 0;
+  for (const entry of readdirOrThrow(coversDir, { withFileTypes: true })) {
+    if (entry.isFile() && isImage(entry.name)) n++;
+    else if (entry.isDirectory()) n += readdirSafe(path.join(coversDir, entry.name)).filter((name) => isImage(name)).length;
+  }
+  return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -753,14 +825,14 @@ function planAccount(steamRoot, accountId, opts, names) {
   let coversStats = null;
   if (opts.coversDir) {
     const known = new Set([...sources.keys(), ...(names ? names.keys() : [])]);
-    const { covers, unmatched, passedOver, scanned, nonImages, matchedByTitle } =
-      discoverFolderCovers(opts.coversDir, known, opts.pick, names);
+    const { covers, unmatched, passedOver, scanned, nonImages, matchedByTitle, redrawn } =
+      discoverFolderCovers(opts.coversDir, known, opts.pick, names, gridIndex.covers);
     for (const [appid, c] of covers) {
       sources.set(appid, { file: c.file, kind: "folder-cover" });
     }
     unmatchedCovers = unmatched;
     coversStats = {
-      scanned, nonImages, passedOver, pick: opts.pick, matched: covers.size, matchedByTitle,
+      scanned, nonImages, passedOver, pick: opts.pick, matched: covers.size, matchedByTitle, redrawn,
     };
   }
 
@@ -1042,6 +1114,9 @@ function formatPlanLines(plan) {
       }
     }
     lines.push(...nameListLines("matched no game in your library:", plan.unmatchedCovers, "warn"));
+    if (cs.redrawn > 0) {
+      lines.push([`    ${cs.redrawn} game(s) drew from their other images, skipping the one already applied`, "info"]);
+    }
     // Which file won an appid is a choice the user made with the pick field, so say
     // which rule was applied — otherwise a random run reads like a mysterious one.
     lines.push(...nameListLines(
@@ -1149,14 +1224,15 @@ function run(opts, hooks = {}) {
     log(`Wide-background folder: ${path.resolve(opts.coversDir)}`);
     // Read it once up front: an unreadable folder should stop the run here, with the reason,
     // rather than quietly contributing nothing to a plan built from Steam's art instead.
-    const present = readdirOrThrow(opts.coversDir).filter((name) => isImage(name)).length;
+    const present = countCoverImages(opts.coversDir);
     log(`  ${present} image(s) in that folder`, present > 0 ? "info" : "warn");
     if (opts.coversOnly) {
       log("  covers-only: only the games those images match are touched; the rest are left alone.");
     }
     log(opts.pick === "random"
-      ? "  pick: random — a game with several images in that folder gets a different one each run."
-      : "  pick: first — a game with several images in that folder always gets the first by name.");
+      ? "  pick: random — a game with several images in that folder gets a different one each run,\n" +
+        "    never the one it has now (matched by file size) while there is another to choose."
+      : "  pick: first — a game with several images in that folder always gets the first by name (rank 1).");
   }
 
   const accounts = resolveAccounts(steamRoot, opts);
